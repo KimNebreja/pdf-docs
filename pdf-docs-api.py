@@ -10,7 +10,6 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 @app.route('/convert', methods=['POST'])
-@app.route('/convert', methods=['POST'])
 def convert_pdf_to_docx():
     if 'file' not in request.files:
         return "No file part", 400
