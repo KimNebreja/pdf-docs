@@ -1,3 +1,4 @@
-fastapi
-uvicorn
+flask
+werkzeug
 pdf2docx
+gunicorn
