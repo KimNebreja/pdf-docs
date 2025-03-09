@@ -2,8 +2,11 @@ from flask import Flask, request, send_file
 from werkzeug.utils import secure_filename
 import os
 from pdf2docx import Converter
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
+
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "/tmp"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
