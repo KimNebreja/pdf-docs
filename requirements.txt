@@ -1,6 +1,7 @@
 flask
-flask_cors
+flask-cors
 werkzeug
 pdf2docx
+language-tool-python
+python-docx
 gunicorn
-requests
