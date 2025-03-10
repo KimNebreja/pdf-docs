@@ -3,4 +3,3 @@ flask_cors
 werkzeug
 pdf2docx
 gunicorn
-request
