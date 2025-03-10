@@ -14,7 +14,7 @@ OUTPUT_FOLDER = "/tmp"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-tool = language_tool_python.LanguageTool('en-US')  # English language
+tool = language_tool_python.LanguageToolPublicAPI('en-US')  # English language
 
 def extract_text_from_docx(docx_path):
     doc = docx.Document(docx_path)
