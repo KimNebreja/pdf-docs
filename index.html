@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF to Proofread DOCX Converter</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+        #uploadForm { margin: 20px auto; padding: 20px; border: 1px solid #ddd; display: inline-block; }
+        input, button { margin-top: 10px; }
+        #proofreadSection { display: none; margin-top: 20px; }
+        textarea { width: 80%; height: 200px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>PDF to Proofread DOCX Converter</h1>
+    <form id="uploadForm" enctype="multipart/form-data">
+        <input type="file" id="pdfFile" accept="application/pdf" required>
+        <button type="submit">Convert</button>
+    </form>
+    <p id="status"></p>
+
+    <div id="proofreadSection">
+        <h2>Proofread Text</h2>
+        <textarea id="proofreadText" readonly></textarea><br>
+        <a id="downloadLink" style="display: none;" download>Download Proofread DOCX</a>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            let fileInput = document.getElementById('pdfFile');
+            if (!fileInput.files.length) return;
+
+            let formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            document.getElementById('status').innerText = "Converting...";
+
+            try {
+                let response = await fetch('https://pdf-docs.onrender.com/convert', { 
+                    method: 'POST', 
+                    body: formData 
+                });
+
+                if (!response.ok) {
+                    document.getElementById('status').innerText = "Conversion failed!";
+                    return;
+                }
+
+                let data = await response.json();
+                
+                // Display proofread text
+                document.getElementById('proofreadText').value = data.proofread_text;
+                document.getElementById('proofreadSection').style.display = "block";
+
+                // Set download link
+                let downloadLink = document.getElementById('downloadLink');
+                downloadLink.href = 'https://pdf-docs.onrender.com' + data.download_url;
+                downloadLink.innerText = "Download Proofread DOCX";
+                downloadLink.style.display = "block";
+                
+            } catch (error) {
+                document.getElementById('status').innerText = "Error: " + error.message;
+            }
+        });
+    </script>
+</body>
+</html>
+
