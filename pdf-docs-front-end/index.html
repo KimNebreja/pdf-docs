@@ -8,10 +8,17 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         body { 
-            font-family: Arial, sans-serif; 
+            font-family: Arial, Helvetica, sans-serif; 
             margin: 0;
             padding: 0;
             display: flex;
+        }
+        .main-content p {
+            font-size: 20px;
+            font-weight: 600;
+            color: #332219;
+            margin-top: -12px;
+            text-align: center;
         }
         .sidebar {
             width: 250px;
@@ -37,11 +44,21 @@
             justify-content: space-between;
             background-color: #332219;
         }
+        .hamburger .logo-container {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            justify-content: space-between;
+        }
+        .hamburger .logo {
+            height: 44px;
+            width: auto;
+        }
         .hamburger:hover {
             background-color: #332219;
         }
         .hamburger i {
-            font-size: 24px;
+            font-size: 25px;
             color: #f4e8d9;
             transition: transform 0.3s;
         }
@@ -69,7 +86,7 @@
             background-color: #332219;
         }
         .external-toggle i {
-            font-size: 20px;
+            font-size: 25px;
             color: #f4e8d9;
         }
         .sidebar.collapsed + .external-toggle {
@@ -84,21 +101,32 @@
             background-color: #f4e8d9;
             color: #332219;
             border: none;
-            font-family: 'Poppins', sans-serif;
-            padding: 10px 20px;
-            border-radius: 5px;
+            font-family: Arial, Helvetica, sans-serif;
+            font-weight: 600;
+            padding: 12px 10px;
+            border-radius: 12px;
             cursor: pointer;
-            width: 55%;
+            width: 35%;
             transition: background-color 0.3s;
         }
         .signup-btn button:hover {
             background-color: #f5dec1;
+        }
+        .phrase {
+            font-size: 12px;
+            font-weight: 400;
+            color: #f4e8d9;
+            text-align: center;
         }
         .main-content {
             margin-left: 250px;
             padding: 20px;
             width: calc(100% - 250px);
             transition: margin-left 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
         }
         .main-content.expanded {
             margin-left: 0;
@@ -107,7 +135,9 @@
             margin: 20px auto; 
             padding: 20px; 
             border: 1px solid #ddd; 
-            display: inline-block; 
+            display: inline-block;
+            text-align: center;
+            width: fit-content;
         }
         input, button { margin-top: 10px; }
         #proofreadSection { display: none; margin-top: 20px; }
@@ -117,10 +147,16 @@
 <body>
     <div class="sidebar" id="sidebar">
         <div class="hamburger" id="hamburger">
-            <i class='bx bx-sidebar'></i>
+            <div class="logo-container">
+                <img src="SmarText PDF_logo.png" alt="SmarText PDF Logo" class="logo">
+                <i class='bx bx-sidebar'></i>
+            </div>
         </div>
         <div class="signup-btn">
-            <button>Sign Up</button>
+            <button>Sign In</button>
+        </div>
+        <div class="phrase">
+            <p>Sign in for free to save and track your file proofreading history.</p>
         </div>
     </div>
 
@@ -129,7 +165,8 @@
     </button>
 
     <div class="main-content" id="mainContent">
-        <h1>SmarText PDF</h1>
+        <img src="SmarText PDF_main-logo.png" alt="SmarText PDF" class="main-logo">
+        <p>Automated Proofreading With Text-to-Speech Functionality</p>
         <form id="uploadForm" enctype="multipart/form-data">
             <input type="file" id="pdfFile" accept="application/pdf" required>
             <button type="submit">Convert</button>
