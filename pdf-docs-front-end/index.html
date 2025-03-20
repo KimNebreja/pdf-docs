@@ -3,30 +3,163 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF to Proofread DOCX Converter</title>
+    <title>SmarText PDF</title>
+
+    <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-        #uploadForm { margin: 20px auto; padding: 20px; border: 1px solid #ddd; display: inline-block; }
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 0;
+            padding: 0;
+            display: flex;
+        }
+        .sidebar {
+            width: 250px;
+            height: 100vh;
+            background-color: #332219;
+            color: white;
+            position: fixed;
+            left: 0;
+            top: 0;
+            transition: transform 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            z-index: 1000;
+        }
+        .sidebar.collapsed {
+            transform: translateX(-250px);
+        }
+        .hamburger {
+            padding: 15px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background-color: #332219;
+        }
+        .hamburger:hover {
+            background-color: #332219;
+        }
+        .hamburger i {
+            font-size: 24px;
+            color: #f4e8d9;
+            transition: transform 0.3s;
+        }
+        .sidebar.collapsed .hamburger i {
+            transform: rotate(180deg);
+        }
+        .external-toggle {
+            position: fixed;
+            left: 0;
+            top: 15px;
+            width: 40px;
+            height: 40px;
+            background-color: #332219;
+            color: white;
+            border: none;
+            border-radius: 0 5px 5px 0;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+            transition: background-color 0.3s;
+        }
+        .external-toggle:hover {
+            background-color: #332219;
+        }
+        .external-toggle i {
+            font-size: 20px;
+            color: #f4e8d9;
+        }
+        .sidebar.collapsed + .external-toggle {
+            display: flex;
+        }
+        .signup-btn {
+            margin-top: auto;
+            padding: 8px;
+            text-align: center;
+        }
+        .signup-btn button {
+            background-color: #f4e8d9;
+            color: #332219;
+            border: none;
+            font-family: 'Poppins', sans-serif;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 55%;
+            transition: background-color 0.3s;
+        }
+        .signup-btn button:hover {
+            background-color: #f5dec1;
+        }
+        .main-content {
+            margin-left: 250px;
+            padding: 20px;
+            width: calc(100% - 250px);
+            transition: margin-left 0.3s ease;
+        }
+        .main-content.expanded {
+            margin-left: 0;
+        }
+        #uploadForm { 
+            margin: 20px auto; 
+            padding: 20px; 
+            border: 1px solid #ddd; 
+            display: inline-block; 
+        }
         input, button { margin-top: 10px; }
         #proofreadSection { display: none; margin-top: 20px; }
         textarea { width: 80%; height: 200px; margin-top: 10px; }
     </style>
 </head>
 <body>
-    <h1>PDF to Proofread DOCX Converter</h1>
-    <form id="uploadForm" enctype="multipart/form-data">
-        <input type="file" id="pdfFile" accept="application/pdf" required>
-        <button type="submit">Convert</button>
-    </form>
-    <p id="status"></p>
+    <div class="sidebar" id="sidebar">
+        <div class="hamburger" id="hamburger">
+            <i class='bx bx-sidebar'></i>
+        </div>
+        <div class="signup-btn">
+            <button>Sign Up</button>
+        </div>
+    </div>
 
-    <div id="proofreadSection">
-        <h2>Proofread Text</h2>
-        <textarea id="proofreadText" readonly></textarea><br>
-        <a id="downloadLink" style="display: none;" download>Download Proofread DOCX</a>
+    <button class="external-toggle" id="externalToggle">
+        <i class='bx bx-sidebar bx-flip-horizontal'></i>
+    </button>
+
+    <div class="main-content" id="mainContent">
+        <h1>SmarText PDF</h1>
+        <form id="uploadForm" enctype="multipart/form-data">
+            <input type="file" id="pdfFile" accept="application/pdf" required>
+            <button type="submit">Convert</button>
+        </form>
+        <p id="status"></p>
+
+        <div id="proofreadSection">
+            <h2>Proofread Text</h2>
+            <textarea id="proofreadText" readonly></textarea><br>
+            <a id="downloadLink" style="display: none;" download>Download Proofread DOCX</a>
+        </div>
     </div>
 
     <script>
+        // Sidebar toggle functionality
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const hamburger = document.getElementById('hamburger');
+        const externalToggle = document.getElementById('externalToggle');
+
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('expanded');
+        }
+
+        hamburger.addEventListener('click', toggleSidebar);
+        externalToggle.addEventListener('click', toggleSidebar);
+
+        // Existing form submission code
         document.getElementById('uploadForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             let fileInput = document.getElementById('pdfFile');
