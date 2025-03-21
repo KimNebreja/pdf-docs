@@ -12,9 +12,11 @@
             margin: 0;
             padding: 0;
             display: flex;
+            align-items: center;
+            justify-content: center;
         }
         .main-content p {
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 600;
             color: #332219;
             margin-top: -12px;
@@ -132,14 +134,45 @@
             margin-left: 0;
         }
         #uploadForm { 
-            margin: 20px auto; 
-            padding: 20px; 
-            border: 1px solid #ddd; 
-            display: inline-block;
+            margin: 28px auto;
+            padding: 65px 200px;
+            border: 2px dashed #332219;
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
             text-align: center;
             width: fit-content;
         }
-        input, button { margin-top: 10px; }
+        input, button { 
+            margin-top: 10px;
+        }
+        .upload-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+        }
+        #uploadForm button {
+            background-color: #332219;
+            color: #f4e8d9;
+            border: none;
+            font-family: Arial, Helvetica, sans-serif;
+            font-weight: 600;
+            padding: 12px 24px;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #uploadForm button i {
+            font-size: 20px;
+        }
+        #uploadForm button:hover {
+            background-color: #4a321f;
+        }
         #proofreadSection { display: none; margin-top: 20px; }
         textarea { width: 80%; height: 200px; margin-top: 10px; }
     </style>
@@ -167,11 +200,15 @@
     <div class="main-content" id="mainContent">
         <img src="SmarText PDF_main-logo.svg" alt="SmarText PDF" class="main-logo">
         <p>Automated Proofreading With Text-to-Speech Functionality</p>
-        <form id="uploadForm" enctype="multipart/form-data">
-            <input type="file" id="pdfFile" accept="application/pdf" required>
-            <button type="submit">Convert</button>
-        </form>
-        <p id="status"></p>
+        
+        <div class="upload-container">
+            <form id="uploadForm" enctype="multipart/form-data">
+                <p>Click to upload or drag and drop PDF here</p>
+                <input type="file" id="pdfFile" accept="application/pdf" required>
+                <button type="submit"><i class='bx bx-upload'></i>Upload PDF</button>
+            </form>
+            <p id="status"></p>
+        </div>
 
         <div id="proofreadSection">
             <h2>Proofread Text</h2>
