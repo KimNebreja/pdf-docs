@@ -375,23 +375,6 @@ textarea {
     }
 }
 
-/* Dark Mode Support */
-@media (prefers-color-scheme: dark) {
-    body {
-        background-color: #1a1a1a;
-    }
-    
-    .main-content p,
-    textarea {
-        color: #f4e8d9;
-    }
-    
-    textarea {
-        background-color: #2a2a2a;
-        border-color: #4a321f;
-    }
-}
-
 .main-logo {
     max-width: 100%;
     height: auto;
