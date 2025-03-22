@@ -6,178 +6,7 @@
     <title>SmarText PDF</title>
     <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <style>
-        body { 
-            font-family: Arial, Helvetica, sans-serif; 
-            margin: 0;
-            padding: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .main-content p {
-            font-size: 18px;
-            font-weight: 600;
-            color: #332219;
-            margin-top: -12px;
-            text-align: center;
-        }
-        .sidebar {
-            width: 250px;
-            height: 100vh;
-            background-color: #332219;
-            color: white;
-            position: fixed;
-            left: 0;
-            top: 0;
-            transition: transform 0.3s ease;
-            display: flex;
-            flex-direction: column;
-            z-index: 1000;
-        }
-        .sidebar.collapsed {
-            transform: translateX(-250px);
-        }
-        .hamburger {
-            padding: 15px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background-color: #332219;
-        }
-        .hamburger .logo-container {
-            display: flex;
-            align-items: center;
-            width: 100%;
-            justify-content: space-between;
-        }
-        .hamburger .logo {
-            height: 44px;
-            width: auto;
-        }
-        .hamburger:hover {
-            background-color: #332219;
-        }
-        .hamburger i {
-            font-size: 25px;
-            color: #f4e8d9;
-            transition: transform 0.3s;
-        }
-        .sidebar.collapsed .hamburger i {
-            transform: rotate(180deg);
-        }
-        .external-toggle {
-            position: fixed;
-            left: 0;
-            top: 15px;
-            width: 40px;
-            height: 40px;
-            background-color: #332219;
-            color: white;
-            border: none;
-            border-radius: 0 5px 5px 0;
-            cursor: pointer;
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 999;
-            transition: background-color 0.3s;
-        }
-        .external-toggle:hover {
-            background-color: #332219;
-        }
-        .external-toggle i {
-            font-size: 25px;
-            color: #f4e8d9;
-        }
-        .sidebar.collapsed + .external-toggle {
-            display: flex;
-        }
-        .signup-btn {
-            margin-top: auto;
-            padding: 8px;
-            text-align: center;
-        }
-        .signup-btn button {
-            background-color: #f4e8d9;
-            color: #332219;
-            border: none;
-            font-family: Arial, Helvetica, sans-serif;
-            font-weight: 600;
-            padding: 12px 10px;
-            border-radius: 12px;
-            cursor: pointer;
-            width: 35%;
-            transition: background-color 0.3s;
-        }
-        .signup-btn button:hover {
-            background-color: #f5dec1;
-        }
-        .phrase {
-            font-size: 12px;
-            font-weight: 400;
-            color: #f4e8d9;
-            text-align: center;
-        }
-        .main-content {
-            margin-left: 250px;
-            padding: 20px;
-            width: calc(100% - 250px);
-            transition: margin-left 0.3s ease;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-        }
-        .main-content.expanded {
-            margin-left: 0;
-        }
-        #uploadForm { 
-            margin: 28px auto;
-            padding: 30px 200px;
-            border: 2px dashed #332219;
-            border-radius: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-            width: fit-content;
-        }
-        input, button { 
-            margin-top: 10px;
-        }
-        .upload-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            border: 2px solid #332219;
-            border-radius: 30px;
-            width: 75%;
-        }
-        #uploadForm button {
-            background-color: #332219;
-            color: #f4e8d9;
-            border: none;
-            font-family: Arial, Helvetica, sans-serif;
-            font-weight: 600;
-            padding: 12px 24px;
-            border-radius: 12px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        #uploadForm button i {
-            font-size: 20px;
-        }
-        #uploadForm button:hover {
-            background-color: #4a321f;
-        }
-        #proofreadSection { display: none; margin-top: 20px; }
-        textarea { width: 80%; height: 200px; margin-top: 10px; }
-    </style>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="sidebar" id="sidebar">
@@ -272,6 +101,25 @@
                 document.getElementById('status').innerText = "Error: " + error.message;
             }
         });
+
+        // Add this after the existing JavaScript code
+        function checkScreenSize() {
+            if (window.innerWidth <= 768) {
+                sidebar.classList.remove('collapsed');
+                sidebar.classList.add('active');
+                mainContent.classList.add('expanded');
+            } else {
+                sidebar.classList.remove('active');
+                if (sidebar.classList.contains('collapsed')) {
+                    mainContent.classList.add('expanded');
+                } else {
+                    mainContent.classList.remove('expanded');
+                }
+            }
+        }
+
+        window.addEventListener('resize', checkScreenSize);
+        checkScreenSize(); // Check on initial load
     </script>
 </body>
 </html>
