@@ -35,11 +35,11 @@ body {
 }
 .hamburger {
     padding: 4px;
+    margin-top: -57px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: right;
-    background-color: #332219;
 }
 .logo-container {
     display: flex;
@@ -53,7 +53,7 @@ body {
     width: auto;
 }
 .hamburger:hover {
-    background-color: #332219;
+    background-color: transparent;
 }
 .hamburger i {
     font-size: 25px;
