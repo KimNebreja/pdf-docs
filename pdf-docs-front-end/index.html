@@ -7,14 +7,19 @@
     <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="styles.css">
+
 </head>
 <body>
     <div class="sidebar" id="sidebar">
-        <div class="hamburger" id="hamburger">
-            <div class="logo-container">
-                <img src="SmarText PDF_sidebar-logo.svg" alt="SmarText PDF" class="logo">
-                <i class='bx bx-sidebar'></i>
-            </div>
+        <div class="logo-container">
+            <img src="SmarText PDF_sidebar-logo.svg" alt="SmarText PDF" class="logo">
+        </div>
+        <div class="hamburger" id="hamburger"> 
+            
+            <i class='bx bx-sidebar'></i>
+        </div>
+        <div class="sidebar-file-style-icon">
+            <img src="SmarText PDF_file-style-logo.svg" alt="File Style Logo" class="file-style-icon">
         </div>
         <div class="signup-btn">
             <button>Sign In</button>
@@ -55,24 +60,101 @@
         const mainContent = document.getElementById('mainContent');
         const hamburger = document.getElementById('hamburger');
         const externalToggle = document.getElementById('externalToggle');
+        let isMobile = window.innerWidth <= 768;
 
         function toggleSidebar() {
-            sidebar.classList.toggle('collapsed');
-            mainContent.classList.toggle('expanded');
+            if (isMobile) {
+                sidebar.classList.toggle('active');
+                mainContent.classList.toggle('expanded');
+            } else {
+                sidebar.classList.toggle('collapsed');
+                mainContent.classList.toggle('expanded');
+            }
         }
 
+        function closeSidebarOnClickOutside(e) {
+            if (isMobile && sidebar.classList.contains('active') && 
+                !sidebar.contains(e.target) && 
+                !externalToggle.contains(e.target)) {
+                sidebar.classList.remove('active');
+                mainContent.classList.remove('expanded');
+            }
+        }
+
+        function handleResize() {
+            const newIsMobile = window.innerWidth <= 768;
+            if (newIsMobile !== isMobile) {
+                isMobile = newIsMobile;
+                if (!isMobile) {
+                    sidebar.classList.remove('active');
+                    mainContent.classList.remove('expanded');
+                }
+            }
+        }
+
+        // Event Listeners
         hamburger.addEventListener('click', toggleSidebar);
         externalToggle.addEventListener('click', toggleSidebar);
+        document.addEventListener('click', closeSidebarOnClickOutside);
+        window.addEventListener('resize', handleResize);
 
-        // Existing form submission code
-        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+        // Form submission code
+        const uploadForm = document.getElementById('uploadForm');
+        const fileInput = document.getElementById('pdfFile');
+        const status = document.getElementById('status');
+
+        // Handle drag and drop
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            uploadForm.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
             e.preventDefault();
-            let fileInput = document.getElementById('pdfFile');
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            uploadForm.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            uploadForm.addEventListener(eventName, unhighlight, false);
+        });
+
+        function highlight(e) {
+            uploadForm.classList.add('highlight');
+        }
+
+        function unhighlight(e) {
+            uploadForm.classList.remove('highlight');
+        }
+
+        uploadForm.addEventListener('drop', handleDrop, false);
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            fileInput.files = files;
+            handleFiles(files);
+        }
+
+        fileInput.addEventListener('change', function() {
+            handleFiles(this.files);
+        });
+
+        function handleFiles(files) {
+            if (files.length > 0) {
+                uploadForm.submit();
+            }
+        }
+
+        uploadForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
             if (!fileInput.files.length) return;
 
             let formData = new FormData();
             formData.append('file', fileInput.files[0]);
-            document.getElementById('status').innerText = "Uploading...";
+            status.innerText = "Uploading...";
 
             try {
                 let response = await fetch('https://pdf-docs.onrender.com/convert', { 
@@ -81,7 +163,7 @@
                 });
 
                 if (!response.ok) {
-                    document.getElementById('status').innerText = "Conversion failed!";
+                    status.innerText = "Conversion failed!";
                     return;
                 }
 
@@ -98,28 +180,12 @@
                 downloadLink.style.display = "block";
                 
             } catch (error) {
-                document.getElementById('status').innerText = "Error: " + error.message;
+                status.innerText = "Error: " + error.message;
             }
         });
 
-        // Add this after the existing JavaScript code
-        function checkScreenSize() {
-            if (window.innerWidth <= 768) {
-                sidebar.classList.remove('collapsed');
-                sidebar.classList.add('active');
-                mainContent.classList.add('expanded');
-            } else {
-                sidebar.classList.remove('active');
-                if (sidebar.classList.contains('collapsed')) {
-                    mainContent.classList.add('expanded');
-                } else {
-                    mainContent.classList.remove('expanded');
-                }
-            }
-        }
-
-        window.addEventListener('resize', checkScreenSize);
-        checkScreenSize(); // Check on initial load
+        // Initial check
+        handleResize();
     </script>
 </body>
 </html>
