@@ -34,20 +34,21 @@ body {
     transform: translateX(-100%);
 }
 .hamburger {
-    padding: 15px;
+    padding: 4px;
     cursor: pointer;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: right;
     background-color: #332219;
 }
-.hamburger .logo-container {
+.logo-container {
     display: flex;
     align-items: center;
+    margin: 20px 0;
     width: 100%;
     justify-content: space-between;
 }
-.hamburger .logo {
+.logo {
     height: 44px;
     width: auto;
 }
