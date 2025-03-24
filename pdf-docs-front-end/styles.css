@@ -16,6 +16,9 @@ body {
     text-align: center;
     padding: 0 20px;
 }
+.upload-container p{
+    font-weight: 800;
+}
 .sidebar {
     width: 250px;
     height: 100vh;
@@ -91,7 +94,7 @@ body {
     display: flex;
 }
 .signup-btn {
-    margin-top: auto;
+    margin-top: -450px;
     padding: 8px;
     text-align: center;
 }
@@ -110,11 +113,13 @@ body {
 .signup-btn button:hover {
     background-color: #f5dec1;
 }
-.phrase {
+.signup-btn p {
     font-size: 12px;
     font-weight: 400;
     color: #f4e8d9;
     text-align: center;
+    margin-bottom: 30px;
+    padding: 0 22px;
 }
 .main-content {
     margin-left: 250px;
@@ -390,8 +395,8 @@ textarea {
 }
 
 .sidebar-file-style-icon .file-style-icon {
-    width: 170px;
-    height: 170px;
+    width: 165px;
+    height: 165px;
     transition: all 0.3s ease;
 }
 
