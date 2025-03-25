@@ -3,19 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SmarText PDF</title>
+    <title>Proofread Result - SmarText PDF</title>
     <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="styles.css">
-
-
 </head>
 <body>
     <div class="sidebar" id="sidebar">
         <div class="logo-container">
             <img src="SmarText PDF_sidebar-logo.svg" alt="SmarText PDF" class="logo">
         </div>
-
+        <div class="hamburger" id="hamburger">  
+            <i class='bx bx-sidebar'></i>
+        </div>
         <div class="sidebar-file-style-icon">
             <img src="SmarText PDF_file-style-logo.svg" alt="File Style Logo" class="file-style-icon">
         </div>
@@ -25,26 +25,23 @@
         </div>
     </div>
 
+    <button class="external-toggle" id="externalToggle">
+        <i class='bx bx-sidebar bx-flip-horizontal' ></i>
+    </button>
+
     <div class="main-content" id="mainContent">
-        <img src="SmarText PDF_main-logo.svg" alt="SmarText PDF" class="main-logo">
-        <p>Automated Proofreading With Text-to-Speech Functionality</p>
-        
-        <div class="upload-container">
-            <form id="uploadForm" enctype="multipart/form-data">
-                <p>Click to upload or drag and drop PDF here</p>
-                <img src="SmarText PDF_folder-icon.svg" alt="SmarText PDF" class="folder-icon">
-                <div class="upload-button-container">
-                    <input type="file" id="pdfFile" accept="application/pdf" required>
-                    <button type="button" class="upload-button">
-                        <i class='bx bx-upload'></i>
-                        <span>Upload PDF</span>
-                    </button>
-                </div>
-            </form>
-            <p id="status"></p>
+        <div id="proofreadSection">
+            <h2>Proofread Text</h2>
+            <textarea id="proofreadText" readonly></textarea><br>
+            <a id="downloadLink" style="display: none;" download>Download Proofread DOCX</a>
+            <button onclick="window.location.href='index.html'" class="back-button">
+                <i class='bx bx-arrow-back'></i>
+                <span>Back to Upload</span>
+            </button>
         </div>
     </div>
-    
-    <script src="function.js"></script>
+
+    <script src="sidebar.js"></script>
+    <script src="proofread.js"></script>
 </body>
-</html>
+</html> 

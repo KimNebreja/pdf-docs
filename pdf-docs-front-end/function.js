@@ -1,184 +1,131 @@
-       // DOM Elements
-       const sidebar = document.getElementById('sidebar');
-       const mainContent = document.getElementById('mainContent');
-       const hamburger = document.getElementById('hamburger');
-       const externalToggle = document.getElementById('externalToggle');
-       const uploadForm = document.getElementById('uploadForm');
-       const fileInput = document.getElementById('pdfFile');
-       const status = document.getElementById('status');
-       const proofreadSection = document.getElementById('proofreadSection');
-       const proofreadText = document.getElementById('proofreadText');
-       const downloadLink = document.getElementById('downloadLink');
-       const uploadButton = document.querySelector('.upload-button');
+// DOM Elements
+const uploadForm = document.getElementById('uploadForm');
+const fileInput = document.getElementById('pdfFile');
+const status = document.getElementById('status');
+const uploadButton = document.querySelector('.upload-button');
 
-       // State Management
-       let isMobile = window.innerWidth <= 768;
-       let isUploading = false;
+// State Management
+let isUploading = false;
 
-       // Sidebar Functionality
-       function toggleSidebar() {
-           if (isMobile) {
-               sidebar.classList.toggle('active');
-               mainContent.classList.toggle('expanded');
-           } else {
-               sidebar.classList.toggle('collapsed');
-               mainContent.classList.toggle('expanded');
-           }
-       }
+// File Upload Functionality
+function validateFile(file) {
+    if (!file) {
+        updateStatus("Please select a file", true);
+        return false;
+    }
+    if (file.type !== 'application/pdf') {
+        updateStatus("Please upload a PDF file", true);
+        return false;
+    }
+    if (file.size > 10 * 1024 * 1024) { // 10MB limit
+        updateStatus("File size should be less than 10MB", true);
+        return false;
+    }
+    return true;
+}
 
-       function closeSidebarOnClickOutside(e) {
-           if (isMobile && sidebar.classList.contains('active') && 
-               !sidebar.contains(e.target) && 
-               !externalToggle.contains(e.target)) {
-               sidebar.classList.remove('active');
-               mainContent.classList.remove('expanded');
-           }
-       }
+function updateStatus(message, isError = false) {
+    status.innerText = message;
+    status.style.color = isError ? '#ff4444' : '#332219';
+    uploadForm.classList.toggle('uploading', !isError);
+}
 
-       function handleResize() {
-           const newIsMobile = window.innerWidth <= 768;
-           if (newIsMobile !== isMobile) {
-               isMobile = newIsMobile;
-               if (!isMobile) {
-                   sidebar.classList.remove('active');
-                   mainContent.classList.remove('expanded');
-               }
-           }
-       }
+function handleFiles(files) {
+    if (files.length === 0) return;
+    
+    const file = files[0];
+    if (!validateFile(file)) return;
 
-       // File Upload Functionality
-       function validateFile(file) {
-           if (!file) {
-               updateStatus("Please select a file", true);
-               return false;
-           }
-           if (file.type !== 'application/pdf') {
-               updateStatus("Please upload a PDF file", true);
-               return false;
-           }
-           if (file.size > 10 * 1024 * 1024) { // 10MB limit
-               updateStatus("File size should be less than 10MB", true);
-               return false;
-           }
-           return true;
-       }
+    if (!isUploading) {
+        handleFormSubmit();
+    }
+}
 
-       function updateStatus(message, isError = false) {
-           status.innerText = message;
-           status.style.color = isError ? '#ff4444' : '#332219';
-           uploadForm.classList.toggle('uploading', !isError);
-       }
+// Drag and Drop Functionality
+function preventDefaults(e) {
+    e.preventDefault();
+    e.stopPropagation();
+}
 
-       function handleFiles(files) {
-           if (files.length === 0) return;
-           
-           const file = files[0];
-           if (!validateFile(file)) return;
+function highlight(e) {
+    uploadForm.classList.add('highlight');
+}
 
-           if (!isUploading) {
-               handleFormSubmit();
-           }
-       }
+function unhighlight(e) {
+    uploadForm.classList.remove('highlight');
+}
 
-       // Drag and Drop Functionality
-       function preventDefaults(e) {
-           e.preventDefault();
-           e.stopPropagation();
-       }
+function handleDrop(e) {
+    const dt = e.dataTransfer;
+    const files = dt.files;
+    fileInput.files = files;
+    handleFiles(files);
+}
 
-       function highlight(e) {
-           uploadForm.classList.add('highlight');
-       }
+// Form Submission
+async function handleFormSubmit() {
+    if (isUploading) return;
+    if (!fileInput.files.length) {
+        updateStatus("Please select a file", true);
+        return;
+    }
 
-       function unhighlight(e) {
-           uploadForm.classList.remove('highlight');
-       }
+    const file = fileInput.files[0];
+    if (!validateFile(file)) return;
 
-       function handleDrop(e) {
-           const dt = e.dataTransfer;
-           const files = dt.files;
-           fileInput.files = files;
-           handleFiles(files);
-       }
+    isUploading = true;
+    updateStatus("Uploading...");
+    uploadForm.classList.add('uploading');
+    uploadButton.disabled = true;
 
-       // Form Submission
-       async function handleFormSubmit() {
-           if (isUploading) return;
-           if (!fileInput.files.length) {
-               updateStatus("Please select a file", true);
-               return;
-           }
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
 
-           const file = fileInput.files[0];
-           if (!validateFile(file)) return;
+        const response = await fetch('https://pdf-docs.onrender.com/convert', { 
+            method: 'POST', 
+            body: formData 
+        });
 
-           isUploading = true;
-           updateStatus("Uploading...");
-           uploadForm.classList.add('uploading');
-           uploadButton.disabled = true;
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
 
-           try {
-               const formData = new FormData();
-               formData.append('file', file);
+        const data = await response.json();
+        
+        // Store the proofread data in localStorage
+        localStorage.setItem('proofreadData', JSON.stringify(data));
+        
+        // Redirect to proofread page
+        window.location.href = 'proofread.html';
 
-               const response = await fetch('https://pdf-docs.onrender.com/convert', { 
-                   method: 'POST', 
-                   body: formData 
-               });
+    } catch (error) {
+        console.error('Upload error:', error);
+        updateStatus("Error: " + error.message, true);
+    } finally {
+        isUploading = false;
+        uploadForm.classList.remove('uploading');
+        uploadButton.disabled = false;
+    }
+}
 
-               if (!response.ok) {
-                   throw new Error(`HTTP error! status: ${response.status}`);
-               }
+// Event Listeners
+['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+    uploadForm.addEventListener(eventName, preventDefaults, false);
+});
 
-               const data = await response.json();
-               
-               // Display proofread text
-               proofreadText.value = data.proofread_text;
-               proofreadSection.style.display = "block";
+['dragenter', 'dragover'].forEach(eventName => {
+    uploadForm.addEventListener(eventName, highlight, false);
+});
 
-               // Set download link
-               downloadLink.href = 'https://pdf-docs.onrender.com' + data.download_url;
-               downloadLink.innerText = "Download Proofread DOCX";
-               downloadLink.style.display = "block";
+['dragleave', 'drop'].forEach(eventName => {
+    uploadForm.addEventListener(eventName, unhighlight, false);
+});
 
-               updateStatus("Upload successful!");
-               
-           } catch (error) {
-               console.error('Upload error:', error);
-               updateStatus("Error: " + error.message, true);
-           } finally {
-               isUploading = false;
-               uploadForm.classList.remove('uploading');
-               uploadButton.disabled = false;
-           }
-       }
-
-       // Event Listeners
-       hamburger.addEventListener('click', toggleSidebar);
-       externalToggle.addEventListener('click', toggleSidebar);
-       document.addEventListener('click', closeSidebarOnClickOutside);
-       window.addEventListener('resize', handleResize);
-
-       // File Upload Event Listeners
-       ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-           uploadForm.addEventListener(eventName, preventDefaults, false);
-       });
-
-       ['dragenter', 'dragover'].forEach(eventName => {
-           uploadForm.addEventListener(eventName, highlight, false);
-       });
-
-       ['dragleave', 'drop'].forEach(eventName => {
-           uploadForm.addEventListener(eventName, unhighlight, false);
-       });
-
-       uploadForm.addEventListener('drop', handleDrop, false);
-       fileInput.addEventListener('change', function() {
-           handleFiles(this.files);
-       });
-       uploadButton.addEventListener('click', function() {
-           fileInput.click();
-       });
-
-       // Initial check
-       handleResize();
+uploadForm.addEventListener('drop', handleDrop, false);
+fileInput.addEventListener('change', function() {
+    handleFiles(this.files);
+});
+uploadButton.addEventListener('click', function() {
+    fileInput.click();
+});

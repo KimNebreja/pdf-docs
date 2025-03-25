@@ -455,3 +455,28 @@ textarea {
     background-color: #4a321f;
     cursor: wait;
 }
+
+.back-button {
+    background-color: #332219;
+    color: #f4e8d9;
+    border: none;
+    font-family: Arial, Helvetica, sans-serif;
+    font-weight: 600;
+    padding: 12px 24px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: 20px auto;
+}
+
+.back-button i {
+    font-size: 20px;
+}
+
+.back-button:hover {
+    background-color: #4a321f;
+}
