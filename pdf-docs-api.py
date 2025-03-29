@@ -66,6 +66,7 @@ def convert_pdf_to_docx():
         save_text_to_docx(proofread_text_content, proofread_docx_path)
 
         return jsonify({
+            "original_text": extracted_text,
             "proofread_text": proofread_text_content,
             "download_url": "/download/" + "proofread_" + docx_filename
         })
