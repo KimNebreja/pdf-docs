@@ -15,7 +15,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # Using local LanguageTool instance for more accuracy
-tool = language_tool_python.LanguageTool('en-US')  # More powerful local version
+tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online API
 
 def extract_text_from_docx(docx_path):
     """Extracts text from a DOCX file."""
