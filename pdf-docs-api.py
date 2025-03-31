@@ -4,7 +4,9 @@ import os
 from pdf2docx import Converter
 from flask_cors import CORS
 import language_tool_python
+import requests
 import docx
+import tempfile
 
 app = Flask(__name__)
 CORS(app)
@@ -30,6 +32,31 @@ def save_text_to_docx(text, docx_path):
     for line in text.split("\n"):
         doc.add_paragraph(line)
     doc.save(docx_path)
+
+def generate_audio(text):
+    try:
+        url = "https://translate.google.com/translate_tts"
+        params = {
+            "ie": "UTF-8",
+            "q": text,
+            "tl": "en",
+            "client": "tw-ob",
+            "ttsspeed": "1"
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.get(url, params=params, headers=headers)
+        
+        if response.status_code == 200:
+            audio_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3", dir=OUTPUT_FOLDER)
+            audio_file.write(response.content)
+            audio_file.close()
+            return os.path.basename(audio_file.name)
+        return None
+    except Exception as e:
+        print(f"Error generating audio: {str(e)}")
+        return None
 
 @app.route('/convert', methods=['POST'])
 def convert_pdf_to_docx():
@@ -65,11 +92,15 @@ def convert_pdf_to_docx():
         proofread_docx_path = os.path.join(OUTPUT_FOLDER, "proofread_" + docx_filename)
         save_text_to_docx(proofread_text_content, proofread_docx_path)
 
-        return jsonify({
+        audio_filename = generate_audio(proofread_text_content)
+        response_data = {
             "original_text": extracted_text,
             "proofread_text": proofread_text_content,
-            "download_url": "/download/" + "proofread_" + docx_filename
-        })
+            "download_url": "/download/" + "proofread_" + docx_filename,
+        }
+        if audio_filename:
+            response_data["audio_url"] = "/audio/" + audio_filename
+        return jsonify(response_data)
 
     except Exception as e:
         return f"Conversion error: {str(e)}", 500
@@ -77,6 +108,13 @@ def convert_pdf_to_docx():
 @app.route('/download/<filename>')
 def download_file(filename):
     return send_file(os.path.join(OUTPUT_FOLDER, filename), as_attachment=True)
+
+@app.route('/audio/<filename>')
+def get_audio(filename):
+    return send_file(
+        os.path.join(OUTPUT_FOLDER, filename),
+        mimetype='audio/mpeg'
+    )
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
