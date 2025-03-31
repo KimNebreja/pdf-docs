@@ -36,7 +36,7 @@ def save_text_to_docx(text, docx_path):
         doc.add_paragraph(line)
     doc.save(docx_path)
 
-def text_to_speech(text):
+def generate_audio(text):
     # Configure the voice settings
     synthesis_input = texttospeech.SynthesisInput(text=text)
     
@@ -54,19 +54,23 @@ def text_to_speech(text):
         pitch=0.0
     )
     
-    # Perform the text-to-speech request
-    response = tts_client.synthesize_speech(
-        input=synthesis_input,
-        voice=voice,
-        audio_config=audio_config
-    )
-    
-    # Generate a temporary file for the audio
-    audio_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3", dir=OUTPUT_FOLDER)
-    audio_file.write(response.audio_content)
-    audio_file.close()
-    
-    return os.path.basename(audio_file.name)
+    try:
+        # Perform the text-to-speech request
+        response = tts_client.synthesize_speech(
+            input=synthesis_input,
+            voice=voice,
+            audio_config=audio_config
+        )
+        
+        # Generate a temporary file for the audio
+        audio_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3", dir=OUTPUT_FOLDER)
+        audio_file.write(response.audio_content)
+        audio_file.close()
+        
+        return os.path.basename(audio_file.name)
+    except Exception as e:
+        print(f"Error generating audio: {str(e)}")
+        return None
 
 @app.route('/convert', methods=['POST'])
 def convert_pdf_to_docx():
@@ -98,19 +102,23 @@ def convert_pdf_to_docx():
         # Proofread the text
         proofread_text_content = proofread_text(extracted_text)
 
-        # Generate audio for the proofread text
-        audio_filename = text_to_speech(proofread_text_content)
+        # Generate audio for proofread text
+        audio_filename = generate_audio(proofread_text_content)
 
         # Save proofread text back to DOCX
         proofread_docx_path = os.path.join(OUTPUT_FOLDER, "proofread_" + docx_filename)
         save_text_to_docx(proofread_text_content, proofread_docx_path)
 
-        return jsonify({
+        response_data = {
             "original_text": extracted_text,
             "proofread_text": proofread_text_content,
             "download_url": "/download/" + "proofread_" + docx_filename,
-            "audio_url": "/audio/" + audio_filename
-        })
+        }
+
+        if audio_filename:
+            response_data["audio_url"] = "/audio/" + audio_filename
+
+        return jsonify(response_data)
 
     except Exception as e:
         return f"Conversion error: {str(e)}", 500
