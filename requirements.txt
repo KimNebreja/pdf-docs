@@ -5,4 +5,4 @@ pdf2docx
 language-tool-python
 python-docx
 gunicorn
-google.cloud
+google-cloud-texttospeech
