@@ -1,10 +1,10 @@
 flask
 flask-cors
-werkzeug
-pdf2docx
-language-tool-python
 python-docx
+werkzeug
 gunicorn
+language-tool-python
+pdf2docx
 reportlab
-PyMuPDF
 PyPDF2
+PyMuPDF
