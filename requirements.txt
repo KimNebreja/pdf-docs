@@ -7,4 +7,3 @@ python-docx
 gunicorn
 reportlab
 PyMuPDF
-PyPDF2
