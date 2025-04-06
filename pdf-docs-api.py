@@ -21,26 +21,14 @@ def extract_text_from_docx(docx_path):
     """Extracts text and formatting from a DOCX file."""
     doc = docx.Document(docx_path)
     formatted_paragraphs = []
-    current_page = 1
     
     for para in doc.paragraphs:
-        # Check for page breaks
-        if para._element.xpath('.//w:br[@w:type="page"]'):
-            # Add a page break marker
-            formatted_paragraphs.append({
-                'type': 'page_break',
-                'page_number': current_page
-            })
-            current_page += 1
-            
-        if not para.text.strip() and not para._element.xpath('.//w:br[@w:type="page"]'):
+        if not para.text.strip():
             # Preserve empty paragraphs for spacing
             formatted_paragraphs.append({
-                'type': 'paragraph',
                 'text': '',
                 'style': 'Normal',
                 'alignment': 0,
-                'page_number': current_page,
                 'indent': {
                     'first_line': 0,
                     'left': 0,
@@ -57,11 +45,9 @@ def extract_text_from_docx(docx_path):
             
         # Extract formatting for each paragraph
         para_format = {
-            'type': 'paragraph',
             'text': para.text,
             'style': para.style.name if para.style else 'Normal',
             'alignment': para.alignment,
-            'page_number': current_page,
             'indent': {
                 'first_line': para.paragraph_format.first_line_indent.pt if para.paragraph_format.first_line_indent else 0,
                 'left': para.paragraph_format.left_indent.pt if para.paragraph_format.left_indent else 0,
@@ -75,7 +61,7 @@ def extract_text_from_docx(docx_path):
             'runs': []
         }
         
-        # Extract formatting for each run
+        # Extract formatting for each run (text segment with consistent formatting)
         for run in para.runs:
             if run.text.strip():
                 run_format = {
