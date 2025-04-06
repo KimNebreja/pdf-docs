@@ -38,7 +38,11 @@ def extract_text_from_docx(docx_path):
             'text': para.text,
             'style': para.style.name if para.style else 'Normal',
             'alignment': para.alignment,
-            'runs': []
+            'runs': [],
+            'indent': para.paragraph_format.left_indent.pt if para.paragraph_format.left_indent else 0,
+            'line_spacing': para.paragraph_format.line_spacing if para.paragraph_format.line_spacing else 1.0,
+            'space_before': para.paragraph_format.space_before.pt if para.paragraph_format.space_before else 0,
+            'space_after': para.paragraph_format.space_after.pt if para.paragraph_format.space_after else 0
         }
         
         # Extract formatting for each run (text segment with consistent formatting)
@@ -241,11 +245,26 @@ def download_pdf(filename):
             if not formatted_text:
                 formatted_text = para.get('text', '')
             
+            # Create a custom style for this paragraph based on its properties
+            para_style = ParagraphStyle(
+                f'CustomStyle_{len(story)}',
+                parent=normal_style,
+                fontSize=11,  # Default font size
+                leading=14,   # Default line spacing
+                spaceBefore=para.get('space_before', 6),
+                spaceAfter=para.get('space_after', 6),
+                leftIndent=para.get('indent', 0)
+            )
+            
             # Apply paragraph-level formatting
             if para.get('style') and 'Heading' in para['style']:
-                p = Paragraph(formatted_text, heading_style)
-            else:
-                p = Paragraph(formatted_text, normal_style)
+                para_style.fontSize = 16
+                para_style.leading = 20
+                para_style.spaceBefore = 12
+                para_style.spaceAfter = 12
+            
+            # Create the paragraph with the custom style
+            p = Paragraph(formatted_text, para_style)
             
             # Apply alignment if available
             if para.get('alignment'):
