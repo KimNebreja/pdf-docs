@@ -391,14 +391,43 @@ def download_pdf(filename):
                 # Create a mapping of original text to proofread text
                 text_mapping = {}
                 
-                # Simple mapping: replace text in order
+                # Improved mapping: try to match text by similarity
+                # This helps when the text has been corrected and doesn't match exactly
                 for i, pos in enumerate(text_positions):
-                    if i < len(proofread_text):
-                        text_mapping[pos['text']] = proofread_text[i]
+                    original_text = pos['text'].strip()
+                    if not original_text:
+                        continue
+                    
+                    # Try to find the best match in the proofread text
+                    best_match_index = -1
+                    best_match_score = 0
+                    
+                    for j, proofread_para in enumerate(proofread_text):
+                        # Simple similarity score based on word overlap
+                        original_words = set(original_text.lower().split())
+                        proofread_words = set(proofread_para.lower().split())
+                        
+                        # Calculate Jaccard similarity
+                        intersection = len(original_words.intersection(proofread_words))
+                        union = len(original_words.union(proofread_words))
+                        
+                        if union > 0:
+                            similarity = intersection / union
+                            if similarity > best_match_score and similarity > 0.3:  # Threshold to avoid false matches
+                                best_match_score = similarity
+                                best_match_index = j
+                    
+                    # If we found a good match, add it to the mapping
+                    if best_match_index >= 0:
+                        text_mapping[original_text] = proofread_text[best_match_index]
+                    # Fallback to index-based mapping if no good match found
+                    elif i < len(proofread_text):
+                        text_mapping[original_text] = proofread_text[i]
                 
                 # Replace text on the page
                 for pos in text_positions:
-                    if pos['text'] in text_mapping:
+                    original_text = pos['text'].strip()
+                    if original_text in text_mapping:
                         # Create a white rectangle to cover the original text
                         new_page.draw_rect(pos['bbox'], color=(1, 1, 1), fill=(1, 1, 1))
                         
@@ -409,7 +438,7 @@ def download_pdf(filename):
                         try:
                             new_page.insert_text(
                                 (pos['bbox'][0], pos['bbox'][1] + pos['size'] * 0.8),  # Position text at the top of the bbox
-                                text_mapping[pos['text']],
+                                text_mapping[original_text],
                                 fontsize=pos['size'],
                                 color=pos['color'],
                                 fontname=font_name
@@ -420,7 +449,7 @@ def download_pdf(filename):
                             try:
                                 new_page.insert_text(
                                     (pos['bbox'][0], pos['bbox'][1] + pos['size'] * 0.8),
-                                    text_mapping[pos['text']],
+                                    text_mapping[original_text],
                                     fontsize=pos['size'],
                                     color=pos['color']
                                 )
@@ -429,7 +458,7 @@ def download_pdf(filename):
                                 # If still failing, just use the most basic approach
                                 new_page.insert_text(
                                     (pos['bbox'][0], pos['bbox'][1] + pos['size'] * 0.8),
-                                    text_mapping[pos['text']]
+                                    text_mapping[original_text]
                                 )
         
         # Save the modified PDF to a buffer
