@@ -13,7 +13,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)
+# Configure CORS to allow all origins and methods
+CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type", "Accept"]}})
 
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "/tmp"
@@ -398,6 +399,34 @@ def download_file(filename):
     if os.path.exists(file_path):
         return send_file(file_path, as_attachment=True)
     return jsonify({"error": "File not found"}), 404
+
+@app.route('/test', methods=['GET'])
+def test_api():
+    """Test endpoint to verify API is working."""
+    return jsonify({
+        "status": "ok",
+        "message": "API is working correctly",
+        "test_data": {
+            "original_content": [{
+                "text": "This is a test message.",
+                "font": "Arial",
+                "size": 12,
+                "color": "#000000",
+                "bold": False,
+                "italic": False,
+                "underline": False
+            }],
+            "proofread_content": [{
+                "text": "This is a test message.",
+                "font": "Arial",
+                "size": 12,
+                "color": "#000000",
+                "bold": False,
+                "italic": False,
+                "underline": False
+            }]
+        }
+    })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
