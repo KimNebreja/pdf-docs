@@ -5,6 +5,13 @@ import docx
 import language_tool_python
 from pdf2docx import Converter
 from flask_cors import CORS
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.colors import black, blue, red
+import io
 
 app = Flask(__name__)
 CORS(app)
@@ -170,6 +177,105 @@ def download_file(filename):
     if os.path.exists(file_path):
         return send_file(file_path, as_attachment=True)
     return jsonify({"error": "File not found"}), 404
+
+@app.route('/download-pdf/<filename>')
+def download_pdf(filename):
+    """Converts a DOCX file to PDF and returns the PDF file."""
+    # Check if the file exists in the OUTPUT_FOLDER
+    docx_path = os.path.join(OUTPUT_FOLDER, filename)
+    if not os.path.exists(docx_path):
+        return jsonify({"error": "DOCX file not found"}), 404
+    
+    try:
+        # Extract text and formatting from DOCX
+        formatted_text = extract_text_from_docx(docx_path)
+        
+        # Create a PDF in memory with proper margins
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer, 
+            pagesize=letter,
+            leftMargin=72,  # 1 inch
+            rightMargin=72,  # 1 inch
+            topMargin=72,    # 1 inch
+            bottomMargin=72  # 1 inch
+        )
+        styles = getSampleStyleSheet()
+        
+        # Create custom styles with better formatting
+        normal_style = ParagraphStyle(
+            'CustomNormal',
+            parent=styles['Normal'],
+            fontSize=11,
+            leading=14,  # Line spacing
+            spaceBefore=6,
+            spaceAfter=6
+        )
+        
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading1'],
+            fontSize=16,
+            leading=20,
+            spaceBefore=12,
+            spaceAfter=12
+        )
+        
+        # Build the PDF content
+        story = []
+        
+        for para in formatted_text:
+            # Process runs to handle text formatting
+            formatted_text = ""
+            for run in para.get('runs', []):
+                text = run.get('text', '')
+                if run.get('bold'):
+                    text = f"<b>{text}</b>"
+                if run.get('italic'):
+                    text = f"<i>{text}</i>"
+                if run.get('underline'):
+                    text = f"<u>{text}</u>"
+                formatted_text += text
+            
+            # If no runs or empty formatted text, use the paragraph text
+            if not formatted_text:
+                formatted_text = para.get('text', '')
+            
+            # Apply paragraph-level formatting
+            if para.get('style') and 'Heading' in para['style']:
+                p = Paragraph(formatted_text, heading_style)
+            else:
+                p = Paragraph(formatted_text, normal_style)
+            
+            # Apply alignment if available
+            if para.get('alignment'):
+                alignment = para['alignment']
+                if alignment == 0:  # Left
+                    p.alignment = 0
+                elif alignment == 1:  # Center
+                    p.alignment = 1
+                elif alignment == 2:  # Right
+                    p.alignment = 2
+                elif alignment == 3:  # Justify
+                    p.alignment = 4
+            
+            story.append(p)
+        
+        # Build the PDF
+        doc.build(story)
+        
+        # Reset buffer position
+        buffer.seek(0)
+        
+        # Return the PDF file
+        return send_file(
+            buffer,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=filename.replace('.docx', '.pdf')
+        )
+    except Exception as e:
+        return jsonify({"error": f"Conversion error: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
