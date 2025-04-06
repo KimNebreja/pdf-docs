@@ -6,16 +6,28 @@ from flask_cors import CORS
 import language_tool_python
 import docx
 import re
+import logging
 
 app = Flask(__name__)
 CORS(app)
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "/tmp"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-tool = language_tool_python.LanguageToolPublicAPI('en-US')  # English language
+# Initialize LanguageTool with error handling
+try:
+    tool = language_tool_python.LanguageToolPublicAPI('en-US')  # English language
+    language_tool_available = True
+    logger.info("LanguageTool API initialized successfully")
+except Exception as e:
+    language_tool_available = False
+    logger.error(f"Failed to initialize LanguageTool API: {str(e)}")
 
 def extract_text_from_docx(docx_path):
     doc = docx.Document(docx_path)
@@ -71,9 +83,17 @@ def proofread_text(text):
             # Extract the actual text content
             content = re.sub(r'\*\*|\s{2,}', ' ', para).strip()
             
-            # Proofread the content
-            matches = tool.check(content)
-            corrected_content = language_tool_python.utils.correct(content, matches)
+            # Proofread the content with error handling
+            try:
+                if language_tool_available:
+                    matches = tool.check(content)
+                    corrected_content = language_tool_python.utils.correct(content, matches)
+                else:
+                    # Fallback: return the original content if LanguageTool is not available
+                    corrected_content = content
+            except Exception as e:
+                logger.error(f"Error during proofreading: {str(e)}")
+                corrected_content = content
             
             # Reapply the formatting
             if re.search(r'^\s{10,}', para):
@@ -88,9 +108,18 @@ def proofread_text(text):
             
             proofread_paragraphs.append(corrected_para)
         else:
-            # For regular paragraphs, proofread normally
-            matches = tool.check(para)
-            corrected_para = language_tool_python.utils.correct(para, matches)
+            # For regular paragraphs, proofread normally with error handling
+            try:
+                if language_tool_available:
+                    matches = tool.check(para)
+                    corrected_para = language_tool_python.utils.correct(para, matches)
+                else:
+                    # Fallback: return the original content if LanguageTool is not available
+                    corrected_para = para
+            except Exception as e:
+                logger.error(f"Error during proofreading: {str(e)}")
+                corrected_para = para
+                
             proofread_paragraphs.append(corrected_para)
     
     return "\n".join(proofread_paragraphs)
@@ -170,6 +199,7 @@ def convert_pdf_to_docx():
         })
 
     except Exception as e:
+        logger.error(f"Conversion error: {str(e)}")
         return f"Conversion error: {str(e)}", 500
 
 @app.route('/download/<filename>')
