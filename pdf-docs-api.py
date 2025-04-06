@@ -5,8 +5,12 @@ import docx
 import language_tool_python
 from pdf2docx import Converter
 from flask_cors import CORS
-import fitz  # PyMuPDF for better PDF handling
-import re
+import traceback
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
@@ -26,66 +30,141 @@ def extract_text_from_docx(docx_path):
 
 def extract_formatted_content_from_pdf(pdf_path):
     """Extracts formatted content from PDF with styling information."""
-    doc = fitz.open(pdf_path)
-    formatted_content = []
-    
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        blocks = page.get_text("dict")["blocks"]
+    try:
+        # Try to use PyMuPDF if available
+        import fitz
+        doc = fitz.open(pdf_path)
+        formatted_content = []
         
-        for block in blocks:
-            if "lines" in block:
-                for line in block["lines"]:
-                    for span in line["spans"]:
-                        # Extract text with formatting
-                        text = span["text"]
-                        font = span["font"]
-                        size = span["size"]
-                        color = span["color"]
-                        
-                        # Convert color to hex
-                        color_hex = "#{:02x}{:02x}{:02x}".format(
-                            int(color[0] * 255), 
-                            int(color[1] * 255), 
-                            int(color[2] * 255)
-                        )
-                        
-                        # Create HTML with styling
-                        formatted_content.append({
-                            "text": text,
-                            "font": font,
-                            "size": size,
-                            "color": color_hex,
-                            "bold": "bold" in font.lower(),
-                            "italic": "italic" in font.lower(),
-                            "underline": "underline" in font.lower()
-                        })
-    
-    return formatted_content
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            blocks = page.get_text("dict")["blocks"]
+            
+            for block in blocks:
+                if "lines" in block:
+                    for line in block["lines"]:
+                        for span in line["spans"]:
+                            # Extract text with formatting
+                            text = span["text"]
+                            font = span["font"]
+                            size = span["size"]
+                            color = span["color"]
+                            
+                            # Convert color to hex
+                            color_hex = "#{:02x}{:02x}{:02x}".format(
+                                int(color[0] * 255), 
+                                int(color[1] * 255), 
+                                int(color[2] * 255)
+                            )
+                            
+                            # Create HTML with styling
+                            formatted_content.append({
+                                "text": text,
+                                "font": font,
+                                "size": size,
+                                "color": color_hex,
+                                "bold": "bold" in font.lower(),
+                                "italic": "italic" in font.lower(),
+                                "underline": "underline" in font.lower()
+                            })
+        
+        return formatted_content
+    except ImportError:
+        # Fallback to pdf2docx if PyMuPDF is not available
+        logger.warning("PyMuPDF not available, falling back to pdf2docx")
+        return extract_formatted_content_fallback(pdf_path)
+    except Exception as e:
+        logger.error(f"Error extracting formatted content: {str(e)}")
+        # Fallback to pdf2docx
+        return extract_formatted_content_fallback(pdf_path)
+
+def extract_formatted_content_fallback(pdf_path):
+    """Fallback method to extract content from PDF using pdf2docx."""
+    try:
+        # Convert PDF to DOCX
+        docx_filename = os.path.basename(pdf_path).rsplit('.', 1)[0] + '_temp.docx'
+        docx_path = os.path.join(OUTPUT_FOLDER, docx_filename)
+        
+        cv = Converter(pdf_path)
+        cv.convert(docx_path, start=0, end=None)
+        cv.close()
+        
+        # Extract text from DOCX
+        doc = docx.Document(docx_path)
+        
+        # Create formatted content with basic styling
+        formatted_content = []
+        for para in doc.paragraphs:
+            if para.text.strip():
+                # Check if paragraph has runs with different formatting
+                if len(para.runs) > 1:
+                    for run in para.runs:
+                        if run.text.strip():
+                            formatted_content.append({
+                                "text": run.text,
+                                "font": run.font.name if run.font.name else "Arial",
+                                "size": 12,  # Default size
+                                "color": "#000000",  # Default color
+                                "bold": run.bold if run.bold is not None else False,
+                                "italic": run.italic if run.italic is not None else False,
+                                "underline": run.underline if run.underline is not None else False
+                            })
+                else:
+                    # Single run paragraph
+                    formatted_content.append({
+                        "text": para.text,
+                        "font": "Arial",
+                        "size": 12,
+                        "color": "#000000",
+                        "bold": False,
+                        "italic": False,
+                        "underline": False
+                    })
+        
+        # Clean up temporary file
+        if os.path.exists(docx_path):
+            os.remove(docx_path)
+            
+        return formatted_content
+    except Exception as e:
+        logger.error(f"Error in fallback extraction: {str(e)}")
+        # Last resort: return plain text
+        return [{"text": "Error extracting formatted content. Please try again.", "font": "Arial", "size": 12, "color": "#000000", "bold": False, "italic": False, "underline": False}]
 
 def proofread_text(text):
     """Proofreads text using LanguageTool and returns corrected text with details."""
-    matches = tool.check(text)
-    corrected_text = language_tool_python.utils.correct(text, matches)
+    try:
+        matches = tool.check(text)
+        corrected_text = language_tool_python.utils.correct(text, matches)
 
-    # Collect detailed grammar mistakes
-    errors = []
-    for match in matches:
-        errors.append({
-            "message": match.message,
-            "suggestions": match.replacements,
-            "offset": match.offset,
-            "length": match.errorLength
-        })
+        # Collect detailed grammar mistakes
+        errors = []
+        for match in matches:
+            errors.append({
+                "message": match.message,
+                "suggestions": match.replacements,
+                "offset": match.offset,
+                "length": match.errorLength
+            })
 
-    return corrected_text, errors
+        return corrected_text, errors
+    except Exception as e:
+        logger.error(f"Error in proofreading: {str(e)}")
+        # Return original text if proofreading fails
+        return text, []
 
 def save_text_to_docx(text, docx_path):
     """Saves proofread text to a new DOCX file."""
-    doc = docx.Document()
-    for line in text.split("\n"):
-        doc.add_paragraph(line)
-    doc.save(docx_path)
+    try:
+        doc = docx.Document()
+        for line in text.split("\n"):
+            doc.add_paragraph(line)
+        doc.save(docx_path)
+    except Exception as e:
+        logger.error(f"Error saving to DOCX: {str(e)}")
+        # Create a simple text file as fallback
+        with open(docx_path, 'w', encoding='utf-8') as f:
+            f.write(text)
 
 @app.route('/convert', methods=['POST'])
 def convert_pdf_to_docx():
@@ -99,12 +178,11 @@ def convert_pdf_to_docx():
 
     filename = secure_filename(file.filename)
     pdf_path = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(pdf_path)
-
-    docx_filename = filename.rsplit('.', 1)[0] + '.docx'
-    docx_path = os.path.join(OUTPUT_FOLDER, docx_filename)
-
+    
     try:
+        # Save the uploaded file
+        file.save(pdf_path)
+        
         # Extract formatted content from PDF
         formatted_content = extract_formatted_content_from_pdf(pdf_path)
         
@@ -154,8 +232,9 @@ def convert_pdf_to_docx():
             current_pos += text_len + 1  # +1 for the space we added between items
 
         # Save proofread text back to DOCX
-        proofread_docx_path = os.path.join(OUTPUT_FOLDER, "proofread_" + docx_filename)
-        save_text_to_docx(proofread_text_content, proofread_docx_path)
+        docx_filename = filename.rsplit('.', 1)[0] + '.docx'
+        docx_path = os.path.join(OUTPUT_FOLDER, "proofread_" + docx_filename)
+        save_text_to_docx(proofread_text_content, docx_path)
 
         return jsonify({
             "original_content": formatted_content,
@@ -166,6 +245,8 @@ def convert_pdf_to_docx():
         })
 
     except Exception as e:
+        logger.error(f"Conversion error: {str(e)}")
+        logger.error(traceback.format_exc())
         return jsonify({"error": f"Conversion error: {str(e)}"}), 500
 
 @app.route('/download/<filename>')
