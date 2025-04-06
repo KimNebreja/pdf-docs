@@ -340,166 +340,89 @@ def download_pdf(filename):
         return jsonify({"error": "DOCX file not found"}), 404
     
     try:
-        # Extract formatting from the original PDF
-        pdf_formatting = extract_pdf_formatting(original_pdf_path)
+        # Extract text from the proofread DOCX
+        doc = docx.Document(docx_path)
+        proofread_text = []
         
-        # Create a temporary DOCX with formatting applied
-        temp_docx_path = os.path.join(OUTPUT_FOLDER, "temp_formatted_" + filename)
-        apply_pdf_formatting_to_docx(docx_path, pdf_formatting, temp_docx_path)
+        for para in doc.paragraphs:
+            if para.text.strip():
+                proofread_text.append(para.text)
         
-        # Extract text and formatting from the formatted DOCX
-        formatted_text = extract_text_from_docx(temp_docx_path)
+        # Open the original PDF
+        pdf_doc = fitz.open(original_pdf_path)
         
-        # Create a PDF in memory with proper margins
-        buffer = io.BytesIO()
+        # Create a new PDF with the same page size and layout
+        output_pdf = fitz.open()
         
-        # Use the original PDF page size if available
-        if pdf_formatting and pdf_formatting['page_size']:
-            width, height = pdf_formatting['page_size']
-            doc = SimpleDocTemplate(
-                buffer, 
-                pagesize=(width, height),
-                leftMargin=72,  # 1 inch
-                rightMargin=72,  # 1 inch
-                topMargin=72,    # 1 inch
-                bottomMargin=72  # 1 inch
-            )
-        else:
-            doc = SimpleDocTemplate(
-                buffer, 
-                pagesize=letter,
-                leftMargin=72,  # 1 inch
-                rightMargin=72,  # 1 inch
-                topMargin=72,    # 1 inch
-                bottomMargin=72  # 1 inch
-            )
-        
-        styles = getSampleStyleSheet()
-        
-        # Create custom styles with better formatting
-        normal_style = ParagraphStyle(
-            'CustomNormal',
-            parent=styles['Normal'],
-            fontSize=11,
-            leading=14,  # Line spacing
-            spaceBefore=6,
-            spaceAfter=6
-        )
-        
-        heading_style = ParagraphStyle(
-            'CustomHeading',
-            parent=styles['Heading1'],
-            fontSize=16,
-            leading=20,
-            spaceBefore=12,
-            spaceAfter=12
-        )
-        
-        # Build the PDF content
-        story = []
-        
-        for para in formatted_text:
-            # Process runs to handle text formatting
-            formatted_text = ""
-            for run in para.get('runs', []):
-                text = run.get('text', '')
-                if run.get('bold'):
-                    text = f"<b>{text}</b>"
-                if run.get('italic'):
-                    text = f"<i>{text}</i>"
-                if run.get('underline'):
-                    text = f"<u>{text}</u>"
-                if run.get('strike'):
-                    text = f"<strike>{text}</strike>"
-                if run.get('subscript'):
-                    text = f"<sub>{text}</sub>"
-                if run.get('superscript'):
-                    text = f"<sup>{text}</sup>"
+        # Process each page of the original PDF
+        for page_num in range(pdf_doc.page_count):
+            # Get the original page
+            original_page = pdf_doc[page_num]
+            
+            # Create a new page with the same size
+            new_page = output_pdf.new_page(width=original_page.rect.width, height=original_page.rect.height)
+            
+            # Copy the original page content (background, images, etc.)
+            new_page.show_pdf_page(new_page.rect, pdf_doc, page_num)
+            
+            # Extract text blocks from the original page
+            text_blocks = original_page.get_text("dict")["blocks"]
+            
+            # Create a list to store text positions
+            text_positions = []
+            
+            # Extract text positions from the original page
+            for block in text_blocks:
+                if block.get("type") == 0:  # Text block
+                    for line in block.get("lines", []):
+                        for span in line.get("spans", []):
+                            text_positions.append({
+                                'text': span.get("text", ""),
+                                'bbox': span.get("bbox", (0, 0, 0, 0)),
+                                'font': span.get("font", ""),
+                                'size': span.get("size", 0),
+                                'color': span.get("color", 0),
+                                'bold': "bold" in span.get("font", "").lower(),
+                                'italic': "italic" in span.get("font", "").lower()
+                            })
+            
+            # If we have proofread text and text positions, replace the text
+            if proofread_text and text_positions:
+                # Create a mapping of original text to proofread text
+                text_mapping = {}
                 
-                # Handle font size if available
-                font_size = run.get('font_size')
-                if font_size:
-                    text = f"<font size='{font_size}'>{text}</font>"
+                # Simple mapping: replace text in order
+                for i, pos in enumerate(text_positions):
+                    if i < len(proofread_text):
+                        text_mapping[pos['text']] = proofread_text[i]
                 
-                # Handle font color if available
-                color = run.get('color')
-                if color:
-                    # Convert RGB color to hex
-                    try:
-                        rgb = color.replace('RGBColor(', '').replace(')', '').split(',')
-                        if len(rgb) == 3:
-                            hex_color = '#{:02x}{:02x}{:02x}'.format(
-                                int(rgb[0]), int(rgb[1]), int(rgb[2])
-                            )
-                            text = f"<font color='{hex_color}'>{text}</font>"
-                    except:
-                        pass
-                
-                formatted_text += text
-            
-            # If no runs or empty formatted text, use the paragraph text
-            if not formatted_text:
-                formatted_text = para.get('text', '')
-            
-            # Create a custom style for this paragraph based on its properties
-            para_style = ParagraphStyle(
-                f'CustomStyle_{len(story)}',
-                parent=normal_style,
-                fontSize=11,  # Default font size
-                leading=14,   # Default line spacing
-                spaceBefore=para.get('space_before', 6),
-                spaceAfter=para.get('space_after', 6),
-                leftIndent=para.get('indent', 0),
-                firstLineIndent=para.get('first_line_indent', 0)
-            )
-            
-            # Apply paragraph-level formatting
-            if para.get('style') and 'Heading' in para['style']:
-                para_style.fontSize = 16
-                para_style.leading = 20
-                para_style.spaceBefore = 12
-                para_style.spaceAfter = 12
-            
-            # Create the paragraph with the custom style
-            p = Paragraph(formatted_text, para_style)
-            
-            # Apply alignment if available
-            if para.get('alignment'):
-                alignment = para['alignment']
-                if alignment == 0:  # Left
-                    p.alignment = 0
-                elif alignment == 1:  # Center
-                    p.alignment = 1
-                elif alignment == 2:  # Right
-                    p.alignment = 2
-                elif alignment == 3:  # Justify
-                    p.alignment = 4
-            
-            # Add page break if needed
-            if para.get('page_break_before'):
-                story.append(PageBreak())
-            
-            story.append(p)
-            
-            # Add keep with next if needed
-            if para.get('keep_with_next'):
-                # This is a simplified approach - in a real implementation,
-                # you would need to handle this more carefully
-                pass
+                # Replace text on the page
+                for pos in text_positions:
+                    if pos['text'] in text_mapping:
+                        # Create a white rectangle to cover the original text
+                        new_page.draw_rect(pos['bbox'], color=(1, 1, 1), fill=(1, 1, 1))
+                        
+                        # Insert the proofread text at the same position
+                        new_page.insert_text(
+                            (pos['bbox'][0], pos['bbox'][1] + pos['size'] * 0.8),  # Position text at the top of the bbox
+                            text_mapping[pos['text']],
+                            fontsize=pos['size'],
+                            color=pos['color'],
+                            fontname=pos['font']
+                        )
         
-        # Build the PDF
-        doc.build(story)
+        # Save the modified PDF to a buffer
+        pdf_buffer = io.BytesIO()
+        output_pdf.save(pdf_buffer)
+        pdf_buffer.seek(0)
         
-        # Reset buffer position
-        buffer.seek(0)
-        
-        # Clean up temporary file
-        if os.path.exists(temp_docx_path):
-            os.remove(temp_docx_path)
+        # Close the PDF documents
+        pdf_doc.close()
+        output_pdf.close()
         
         # Return the PDF file
         return send_file(
-            buffer,
+            pdf_buffer,
             mimetype='application/pdf',
             as_attachment=True,
             download_name=original_filename
@@ -509,4 +432,3 @@ def download_pdf(filename):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
-
