@@ -5,5 +5,3 @@ pdf2docx
 language-tool-python
 python-docx
 gunicorn
-docx.shared
-docx.enum.text
