@@ -38,24 +38,49 @@ def extract_formatted_content_from_pdf(pdf_path):
         
         for page_num in range(len(doc)):
             page = doc[page_num]
-            blocks = page.get_text("dict")["blocks"]
-            
-            for block in blocks:
-                if "lines" in block:
+            try:
+                # Get text blocks with formatting information
+                blocks = page.get_text("dict")
+                
+                # Check if blocks is a dictionary and has the expected structure
+                if not isinstance(blocks, dict) or "blocks" not in blocks:
+                    logger.warning(f"Unexpected structure in PDF page {page_num}: {blocks}")
+                    continue
+                
+                for block in blocks["blocks"]:
+                    # Check if block has the expected structure
+                    if not isinstance(block, dict) or "lines" not in block:
+                        continue
+                        
                     for line in block["lines"]:
+                        # Check if line has the expected structure
+                        if not isinstance(line, dict) or "spans" not in line:
+                            continue
+                            
                         for span in line["spans"]:
+                            # Check if span has the expected structure
+                            if not isinstance(span, dict):
+                                continue
+                                
                             # Extract text with formatting
-                            text = span["text"]
-                            font = span["font"]
-                            size = span["size"]
-                            color = span["color"]
+                            text = span.get("text", "")
+                            font = span.get("font", "Arial")
+                            size = span.get("size", 12)
+                            color = span.get("color", [0, 0, 0])
+                            
+                            # Ensure color is a list with at least 3 elements
+                            if not isinstance(color, (list, tuple)) or len(color) < 3:
+                                color = [0, 0, 0]
                             
                             # Convert color to hex
-                            color_hex = "#{:02x}{:02x}{:02x}".format(
-                                int(color[0] * 255), 
-                                int(color[1] * 255), 
-                                int(color[2] * 255)
-                            )
+                            try:
+                                color_hex = "#{:02x}{:02x}{:02x}".format(
+                                    int(color[0] * 255), 
+                                    int(color[1] * 255), 
+                                    int(color[2] * 255)
+                                )
+                            except (TypeError, ValueError, IndexError):
+                                color_hex = "#000000"
                             
                             # Create HTML with styling
                             formatted_content.append({
@@ -63,10 +88,14 @@ def extract_formatted_content_from_pdf(pdf_path):
                                 "font": font,
                                 "size": size,
                                 "color": color_hex,
-                                "bold": "bold" in font.lower(),
-                                "italic": "italic" in font.lower(),
-                                "underline": "underline" in font.lower()
+                                "bold": "bold" in str(font).lower(),
+                                "italic": "italic" in str(font).lower(),
+                                "underline": "underline" in str(font).lower()
                             })
+            except Exception as page_error:
+                logger.error(f"Error processing page {page_num}: {str(page_error)}")
+                logger.error(traceback.format_exc())
+                # Continue with next page
         
         # Check if we extracted any content
         if not formatted_content:
@@ -213,6 +242,38 @@ def convert_pdf_to_docx():
         # Save the uploaded file
         file.save(pdf_path)
         
+        # Check if the file is a valid PDF
+        try:
+            import fitz
+            # Try to open the PDF to validate it
+            doc = fitz.open(pdf_path)
+            if len(doc) == 0:
+                raise ValueError("PDF has no pages")
+            doc.close()
+        except Exception as pdf_error:
+            logger.error(f"Invalid PDF file: {str(pdf_error)}")
+            # Create a fallback response with error information
+            error_message = f"Invalid PDF file: {str(pdf_error)}"
+            fallback_content = [{
+                "text": error_message,
+                "font": "Arial",
+                "size": 12,
+                "color": "#000000",
+                "bold": False,
+                "italic": False,
+                "underline": False
+            }]
+            
+            # Return a response with the expected structure but with error information
+            return jsonify({
+                "original_content": fallback_content,
+                "proofread_content": fallback_content,
+                "grammar_errors": [],
+                "download_url": "",
+                "file_name": filename,
+                "error": error_message
+            }), 200
+        
         # Extract formatted content from PDF
         formatted_content = extract_formatted_content_from_pdf(pdf_path)
         
@@ -232,6 +293,21 @@ def convert_pdf_to_docx():
         
         # Extract plain text for proofreading
         plain_text = " ".join([item["text"] for item in formatted_content])
+        
+        # Check if we have enough text to proofread
+        if len(plain_text.strip()) < 10:
+            logger.warning(f"Insufficient text for proofreading: {filename}")
+            # Create a fallback content with a message
+            formatted_content = [{
+                "text": "Insufficient text content for proofreading. The PDF might contain mostly images or be password-protected.",
+                "font": "Arial",
+                "size": 12,
+                "color": "#000000",
+                "bold": False,
+                "italic": False,
+                "underline": False
+            }]
+            plain_text = formatted_content[0]["text"]
         
         # Proofread the text
         proofread_text_content, grammar_errors = proofread_text(plain_text)
