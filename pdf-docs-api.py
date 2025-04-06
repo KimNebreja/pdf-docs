@@ -417,7 +417,11 @@ def download_pdf(filename):
             buffer,
             mimetype='application/pdf',
             as_attachment=True,
-            download_name=original_filename
+            download_name=original_filename,
+            headers={
+                'Content-Disposition': f'attachment; filename="{original_filename}"',
+                'Access-Control-Expose-Headers': 'Content-Disposition'
+            }
         )
     except Exception as e:
         print(f"Error in download_pdf: {str(e)}")
