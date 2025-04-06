@@ -7,6 +7,9 @@ import language_tool_python
 import docx
 import re
 import logging
+import time
+import requests
+import json
 
 app = Flask(__name__)
 CORS(app)
@@ -20,14 +23,143 @@ OUTPUT_FOLDER = "/tmp"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Initialize LanguageTool with error handling
-try:
-    tool = language_tool_python.LanguageToolPublicAPI('en-US')  # English language
-    language_tool_available = True
-    logger.info("LanguageTool API initialized successfully")
-except Exception as e:
-    language_tool_available = False
-    logger.error(f"Failed to initialize LanguageTool API: {str(e)}")
+# Global variables for LanguageTool
+tool = None
+language_tool_available = False
+
+# Initialize LanguageTool with error handling and retry mechanism
+def initialize_language_tool(max_retries=3, retry_delay=2):
+    global tool, language_tool_available
+    
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Attempting to initialize LanguageTool API (attempt {attempt+1}/{max_retries})")
+            
+            # Try using the local server first (more reliable)
+            try:
+                tool = language_tool_python.LanguageTool('en-US', remote_server=None)
+                # Test the connection with a simple check
+                tool.check("Test")
+                logger.info("LanguageTool local server initialized successfully")
+                language_tool_available = True
+                return tool, True
+            except Exception as local_error:
+                logger.warning(f"Local LanguageTool server failed: {str(local_error)}")
+                
+                # Fall back to public API
+                tool = language_tool_python.LanguageToolPublicAPI('en-US')
+                # Test the connection with a simple check
+                tool.check("Test")
+                logger.info("LanguageTool public API initialized successfully")
+                language_tool_available = True
+                return tool, True
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize LanguageTool API (attempt {attempt+1}/{max_retries}): {str(e)}")
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                logger.error("All attempts to initialize LanguageTool API failed")
+                language_tool_available = False
+                return None, False
+
+# Initialize the tool
+tool, language_tool_available = initialize_language_tool()
+
+# Custom proofreading function that handles LanguageTool errors
+def safe_proofread(text, max_retries=2):
+    """
+    Safely proofread text using LanguageTool with error handling and retries
+    """
+    global tool, language_tool_available
+    
+    if not language_tool_available or not tool:
+        logger.warning("LanguageTool not available, using local proofreading")
+        return local_proofread(text)
+    
+    for attempt in range(max_retries):
+        try:
+            # Check for "Upgrade Required" error specifically
+            try:
+                matches = tool.check(text)
+                return language_tool_python.utils.correct(text, matches)
+            except Exception as e:
+                if "Upgrade Required" in str(e):
+                    logger.error(f"LanguageTool API upgrade required error: {str(e)}")
+                    # Try to reinitialize the tool
+                    tool, language_tool_available = initialize_language_tool()
+                    if not language_tool_available:
+                        return local_proofread(text)
+                else:
+                    raise e
+        except Exception as e:
+            logger.error(f"Error during proofreading (attempt {attempt+1}/{max_retries}): {str(e)}")
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in 1 second...")
+                time.sleep(1)
+            else:
+                logger.warning("All proofreading attempts failed, using local proofreading")
+                return local_proofread(text)
+    
+    # Fallback to local proofreading if all retries fail
+    return local_proofread(text)
+
+# Simple local proofreading function as fallback
+def local_proofread(text):
+    """
+    A simple local proofreading function that doesn't rely on external services.
+    This is a basic implementation that can be enhanced with more sophisticated rules.
+    """
+    # Common spelling corrections
+    corrections = {
+        'teh': 'the',
+        'thier': 'their',
+        'recieve': 'receive',
+        'wierd': 'weird',
+        'seperate': 'separate',
+        'occured': 'occurred',
+        'accomodate': 'accommodate',
+        'committment': 'commitment',
+        'definately': 'definitely',
+        'goverment': 'government',
+        'harrass': 'harass',
+        'independant': 'independent',
+        'judgement': 'judgment',
+        'lenght': 'length',
+        'occurence': 'occurrence',
+        'persistant': 'persistent',
+        'posession': 'possession',
+        'priviledge': 'privilege',
+        'publically': 'publicly',
+        'recieved': 'received',
+        'refered': 'referred',
+        'seperate': 'separate',
+        'succesful': 'successful',
+        'truely': 'truly',
+        'untill': 'until',
+        'wich': 'which',
+        'withdrawl': 'withdrawal',
+        'writen': 'written',
+        'your': 'your',  # Keep this as is
+        'youre': "you're",
+        'its': 'its',    # Keep this as is
+        "it's": "it's",  # Keep this as is
+        'their': 'their', # Keep this as is
+        'there': 'there', # Keep this as is
+        "they're": "they're", # Keep this as is
+        'to': 'to',      # Keep this as is
+        'too': 'too',    # Keep this as is
+        'two': 'two',    # Keep this as is
+    }
+    
+    # Apply corrections
+    corrected_text = text
+    for wrong, right in corrections.items():
+        # Use word boundaries to avoid replacing parts of words
+        corrected_text = re.sub(r'\b' + wrong + r'\b', right, corrected_text, flags=re.IGNORECASE)
+    
+    return corrected_text
 
 def extract_text_from_docx(docx_path):
     doc = docx.Document(docx_path)
@@ -83,17 +215,8 @@ def proofread_text(text):
             # Extract the actual text content
             content = re.sub(r'\*\*|\s{2,}', ' ', para).strip()
             
-            # Proofread the content with error handling
-            try:
-                if language_tool_available:
-                    matches = tool.check(content)
-                    corrected_content = language_tool_python.utils.correct(content, matches)
-                else:
-                    # Fallback: return the original content if LanguageTool is not available
-                    corrected_content = content
-            except Exception as e:
-                logger.error(f"Error during proofreading: {str(e)}")
-                corrected_content = content
+            # Use the safe proofreading function
+            corrected_content = safe_proofread(content)
             
             # Reapply the formatting
             if re.search(r'^\s{10,}', para):
@@ -108,18 +231,8 @@ def proofread_text(text):
             
             proofread_paragraphs.append(corrected_para)
         else:
-            # For regular paragraphs, proofread normally with error handling
-            try:
-                if language_tool_available:
-                    matches = tool.check(para)
-                    corrected_para = language_tool_python.utils.correct(para, matches)
-                else:
-                    # Fallback: return the original content if LanguageTool is not available
-                    corrected_para = para
-            except Exception as e:
-                logger.error(f"Error during proofreading: {str(e)}")
-                corrected_para = para
-                
+            # For regular paragraphs, use the safe proofreading function
+            corrected_para = safe_proofread(para)
             proofread_paragraphs.append(corrected_para)
     
     return "\n".join(proofread_paragraphs)
@@ -208,4 +321,3 @@ def download_file(filename):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
-    
