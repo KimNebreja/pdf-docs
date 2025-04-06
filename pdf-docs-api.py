@@ -78,6 +78,31 @@ def proofread_text(text):
         if i < len(corrected_paragraphs):
             corrected_para = para.copy()
             corrected_para['text'] = corrected_paragraphs[i]
+            
+            # Update the text in each run to maintain formatting
+            if corrected_para.get('runs') and len(corrected_para['runs']) > 0:
+                # If we have runs, we need to update them to match the corrected text
+                # This is a simplified approach - for more complex cases, you might need
+                # a more sophisticated algorithm to map corrections to specific runs
+                
+                # If there's only one run, simply update its text
+                if len(corrected_para['runs']) == 1:
+                    corrected_para['runs'][0]['text'] = corrected_paragraphs[i]
+                else:
+                    # For multiple runs, we need a more sophisticated approach
+                    # Here we'll use a simple approach where we update the first run
+                    # and remove the rest, but in a real implementation, you might want
+                    # to use a more sophisticated algorithm to map corrections to specific runs
+                    corrected_para['runs'] = [{
+                        'text': corrected_paragraphs[i],
+                        'bold': corrected_para['runs'][0].get('bold', False),
+                        'italic': corrected_para['runs'][0].get('italic', False),
+                        'underline': corrected_para['runs'][0].get('underline', False),
+                        'font_size': corrected_para['runs'][0].get('font_size'),
+                        'font_name': corrected_para['runs'][0].get('font_name'),
+                        'color': corrected_para['runs'][0].get('color')
+                    }]
+            
             formatted_corrected.append(corrected_para)
         else:
             formatted_corrected.append(para)
