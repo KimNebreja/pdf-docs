@@ -6,3 +6,5 @@ language-tool-python
 python-docx
 gunicorn
 reportlab
+PyMuPDF
+PyPDF2
