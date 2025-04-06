@@ -5,3 +5,4 @@ pdf2docx
 language-tool-python
 python-docx
 gunicorn
+logging
