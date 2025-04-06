@@ -192,154 +192,27 @@ def download_file(filename):
 
 @app.route('/download-pdf/<filename>')
 def download_pdf(filename):
-    """Converts a DOCX file to PDF and returns the PDF file."""
-    # Check if the file exists in the OUTPUT_FOLDER
-    docx_path = os.path.join(OUTPUT_FOLDER, filename)
-    if not os.path.exists(docx_path):
-        return jsonify({"error": "DOCX file not found"}), 404
+    """Returns the original PDF file for download."""
+    # Extract the original filename from the proofread filename
+    # The format is "proofread_originalname.docx"
+    original_filename = filename.replace("proofread_", "")
+    original_filename = original_filename.replace(".docx", ".pdf")
+    
+    # Check if the original PDF exists in the UPLOAD_FOLDER
+    pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
+    if not os.path.exists(pdf_path):
+        return jsonify({"error": "Original PDF file not found"}), 404
     
     try:
-        # Extract text and formatting from DOCX
-        formatted_text = extract_text_from_docx(docx_path)
-        
-        # Create a PDF in memory with proper margins
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(
-            buffer, 
-            pagesize=letter,
-            leftMargin=72,  # 1 inch
-            rightMargin=72,  # 1 inch
-            topMargin=72,    # 1 inch
-            bottomMargin=72  # 1 inch
-        )
-        styles = getSampleStyleSheet()
-        
-        # Create custom styles with better formatting
-        normal_style = ParagraphStyle(
-            'CustomNormal',
-            parent=styles['Normal'],
-            fontSize=11,
-            leading=14,  # Line spacing
-            spaceBefore=6,
-            spaceAfter=6
-        )
-        
-        heading_style = ParagraphStyle(
-            'CustomHeading',
-            parent=styles['Heading1'],
-            fontSize=16,
-            leading=20,
-            spaceBefore=12,
-            spaceAfter=12
-        )
-        
-        # Build the PDF content
-        story = []
-        
-        for para in formatted_text:
-            # Process runs to handle text formatting
-            formatted_text = ""
-            for run in para.get('runs', []):
-                text = run.get('text', '')
-                if run.get('bold'):
-                    text = f"<b>{text}</b>"
-                if run.get('italic'):
-                    text = f"<i>{text}</i>"
-                if run.get('underline'):
-                    text = f"<u>{text}</u>"
-                if run.get('strike'):
-                    text = f"<strike>{text}</strike>"
-                if run.get('subscript'):
-                    text = f"<sub>{text}</sub>"
-                if run.get('superscript'):
-                    text = f"<sup>{text}</sup>"
-                
-                # Handle font size if available
-                font_size = run.get('font_size')
-                if font_size:
-                    text = f"<font size='{font_size}'>{text}</font>"
-                
-                # Handle font color if available
-                color = run.get('color')
-                if color:
-                    # Convert RGB color to hex
-                    try:
-                        rgb = color.replace('RGBColor(', '').replace(')', '').split(',')
-                        if len(rgb) == 3:
-                            hex_color = '#{:02x}{:02x}{:02x}'.format(
-                                int(rgb[0]), int(rgb[1]), int(rgb[2])
-                            )
-                            text = f"<font color='{hex_color}'>{text}</font>"
-                    except:
-                        pass
-                
-                formatted_text += text
-            
-            # If no runs or empty formatted text, use the paragraph text
-            if not formatted_text:
-                formatted_text = para.get('text', '')
-            
-            # Create a custom style for this paragraph based on its properties
-            para_style = ParagraphStyle(
-                f'CustomStyle_{len(story)}',
-                parent=normal_style,
-                fontSize=11,  # Default font size
-                leading=14,   # Default line spacing
-                spaceBefore=para.get('space_before', 6),
-                spaceAfter=para.get('space_after', 6),
-                leftIndent=para.get('indent', 0),
-                firstLineIndent=para.get('first_line_indent', 0)
-            )
-            
-            # Apply paragraph-level formatting
-            if para.get('style') and 'Heading' in para['style']:
-                para_style.fontSize = 16
-                para_style.leading = 20
-                para_style.spaceBefore = 12
-                para_style.spaceAfter = 12
-            
-            # Create the paragraph with the custom style
-            p = Paragraph(formatted_text, para_style)
-            
-            # Apply alignment if available
-            if para.get('alignment'):
-                alignment = para['alignment']
-                if alignment == 0:  # Left
-                    p.alignment = 0
-                elif alignment == 1:  # Center
-                    p.alignment = 1
-                elif alignment == 2:  # Right
-                    p.alignment = 2
-                elif alignment == 3:  # Justify
-                    p.alignment = 4
-            
-            # Add page break if needed
-            if para.get('page_break_before'):
-                story.append(PageBreak())
-            
-            story.append(p)
-            
-            # Add keep with next if needed
-            if para.get('keep_with_next'):
-                # This is a simplified approach - in a real implementation,
-                # you would need to handle this more carefully
-                pass
-        
-        # Build the PDF
-        doc.build(story)
-        
-        # Reset buffer position
-        buffer.seek(0)
-        
-        # Return the PDF file
+        # Return the original PDF file
         return send_file(
-            buffer,
+            pdf_path,
             mimetype='application/pdf',
             as_attachment=True,
-            download_name=filename.replace('.docx', '.pdf')
+            download_name=original_filename
         )
     except Exception as e:
-        return jsonify({"error": f"Conversion error: {str(e)}"}), 500
+        return jsonify({"error": f"Download error: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
