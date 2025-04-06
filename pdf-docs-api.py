@@ -7,7 +7,6 @@ import language_tool_python
 import docx
 import re
 import logging
-import time
 import requests
 import json
 
@@ -27,8 +26,8 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 tool = None
 language_tool_available = False
 
-# Initialize LanguageTool with error handling and retry mechanism
-def initialize_language_tool(max_retries=3, retry_delay=2):
+# Initialize LanguageTool with error handling
+def initialize_language_tool(max_retries=3):
     global tool, language_tool_available
     
     for attempt in range(max_retries):
@@ -57,8 +56,7 @@ def initialize_language_tool(max_retries=3, retry_delay=2):
         except Exception as e:
             logger.error(f"Failed to initialize LanguageTool API (attempt {attempt+1}/{max_retries}): {str(e)}")
             if attempt < max_retries - 1:
-                logger.info(f"Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
+                logger.info(f"Retrying...")
             else:
                 logger.error("All attempts to initialize LanguageTool API failed")
                 language_tool_available = False
@@ -96,8 +94,7 @@ def safe_proofread(text, max_retries=2):
         except Exception as e:
             logger.error(f"Error during proofreading (attempt {attempt+1}/{max_retries}): {str(e)}")
             if attempt < max_retries - 1:
-                logger.info(f"Retrying in 1 second...")
-                time.sleep(1)
+                logger.info(f"Retrying...")
             else:
                 logger.warning("All proofreading attempts failed, using local proofreading")
                 return local_proofread(text)
