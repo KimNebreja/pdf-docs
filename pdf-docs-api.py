@@ -6,7 +6,7 @@ import language_tool_python
 from pdf2docx import Converter
 from flask_cors import CORS
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -42,7 +42,11 @@ def extract_text_from_docx(docx_path):
             'indent': para.paragraph_format.left_indent.pt if para.paragraph_format.left_indent else 0,
             'line_spacing': para.paragraph_format.line_spacing if para.paragraph_format.line_spacing else 1.0,
             'space_before': para.paragraph_format.space_before.pt if para.paragraph_format.space_before else 0,
-            'space_after': para.paragraph_format.space_after.pt if para.paragraph_format.space_after else 0
+            'space_after': para.paragraph_format.space_after.pt if para.paragraph_format.space_after else 0,
+            'first_line_indent': para.paragraph_format.first_line_indent.pt if para.paragraph_format.first_line_indent else 0,
+            'keep_together': para.paragraph_format.keep_together if hasattr(para.paragraph_format, 'keep_together') else False,
+            'keep_with_next': para.paragraph_format.keep_with_next if hasattr(para.paragraph_format, 'keep_with_next') else False,
+            'page_break_before': para.paragraph_format.page_break_before if hasattr(para.paragraph_format, 'page_break_before') else False
         }
         
         # Extract formatting for each run (text segment with consistent formatting)
@@ -55,7 +59,11 @@ def extract_text_from_docx(docx_path):
                     'underline': run.underline,
                     'font_size': run.font.size.pt if run.font.size else None,
                     'font_name': run.font.name if run.font.name else None,
-                    'color': str(run.font.color.rgb) if run.font.color and run.font.color.rgb else None
+                    'color': str(run.font.color.rgb) if run.font.color and run.font.color.rgb else None,
+                    'highlight': str(run.font.highlight_color) if run.font.highlight_color else None,
+                    'strike': run.strike if hasattr(run, 'strike') else False,
+                    'subscript': run.subscript if hasattr(run, 'subscript') else False,
+                    'superscript': run.superscript if hasattr(run, 'superscript') else False
                 }
                 para_format['runs'].append(run_format)
         
@@ -239,6 +247,32 @@ def download_pdf(filename):
                     text = f"<i>{text}</i>"
                 if run.get('underline'):
                     text = f"<u>{text}</u>"
+                if run.get('strike'):
+                    text = f"<strike>{text}</strike>"
+                if run.get('subscript'):
+                    text = f"<sub>{text}</sub>"
+                if run.get('superscript'):
+                    text = f"<sup>{text}</sup>"
+                
+                # Handle font size if available
+                font_size = run.get('font_size')
+                if font_size:
+                    text = f"<font size='{font_size}'>{text}</font>"
+                
+                # Handle font color if available
+                color = run.get('color')
+                if color:
+                    # Convert RGB color to hex
+                    try:
+                        rgb = color.replace('RGBColor(', '').replace(')', '').split(',')
+                        if len(rgb) == 3:
+                            hex_color = '#{:02x}{:02x}{:02x}'.format(
+                                int(rgb[0]), int(rgb[1]), int(rgb[2])
+                            )
+                            text = f"<font color='{hex_color}'>{text}</font>"
+                    except:
+                        pass
+                
                 formatted_text += text
             
             # If no runs or empty formatted text, use the paragraph text
@@ -253,7 +287,8 @@ def download_pdf(filename):
                 leading=14,   # Default line spacing
                 spaceBefore=para.get('space_before', 6),
                 spaceAfter=para.get('space_after', 6),
-                leftIndent=para.get('indent', 0)
+                leftIndent=para.get('indent', 0),
+                firstLineIndent=para.get('first_line_indent', 0)
             )
             
             # Apply paragraph-level formatting
@@ -278,7 +313,17 @@ def download_pdf(filename):
                 elif alignment == 3:  # Justify
                     p.alignment = 4
             
+            # Add page break if needed
+            if para.get('page_break_before'):
+                story.append(PageBreak())
+            
             story.append(p)
+            
+            # Add keep with next if needed
+            if para.get('keep_with_next'):
+                # This is a simplified approach - in a real implementation,
+                # you would need to handle this more carefully
+                pass
         
         # Build the PDF
         doc.build(story)
