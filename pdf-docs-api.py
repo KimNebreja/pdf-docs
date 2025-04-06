@@ -4,6 +4,7 @@ import os
 import docx
 import language_tool_python
 from pdf2docx import Converter
+from docx2pdf import convert
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -202,6 +203,27 @@ def download_file(filename):
         return send_file(file_path, as_attachment=True)
     
     return jsonify({"error": "File not found"}), 404
+
+@app.route('/convert-to-pdf/<filename>')
+def convert_to_pdf(filename):
+    """Converts a DOCX file to PDF and returns the PDF file."""
+    # Check if the file exists in the OUTPUT_FOLDER
+    docx_path = os.path.join(OUTPUT_FOLDER, filename)
+    if not os.path.exists(docx_path):
+        return jsonify({"error": "DOCX file not found"}), 404
+    
+    # Create a PDF filename
+    pdf_filename = filename.rsplit('.', 1)[0] + '.pdf'
+    pdf_path = os.path.join(OUTPUT_FOLDER, pdf_filename)
+    
+    try:
+        # Convert DOCX to PDF
+        convert(docx_path, pdf_path)
+        
+        # Return the PDF file
+        return send_file(pdf_path, as_attachment=True)
+    except Exception as e:
+        return jsonify({"error": f"Conversion error: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
