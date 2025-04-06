@@ -18,14 +18,46 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online API
 
 def extract_text_from_docx(docx_path):
-    """Extracts text from a DOCX file."""
+    """Extracts text and formatting from a DOCX file."""
     doc = docx.Document(docx_path)
-    return "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+    formatted_paragraphs = []
+    
+    for para in doc.paragraphs:
+        if not para.text.strip():
+            continue
+            
+        # Extract formatting for each paragraph
+        para_format = {
+            'text': para.text,
+            'style': para.style.name if para.style else 'Normal',
+            'alignment': para.alignment,
+            'runs': []
+        }
+        
+        # Extract formatting for each run (text segment with consistent formatting)
+        for run in para.runs:
+            if run.text.strip():
+                run_format = {
+                    'text': run.text,
+                    'bold': run.bold,
+                    'italic': run.italic,
+                    'underline': run.underline,
+                    'font_size': run.font.size.pt if run.font.size else None,
+                    'font_name': run.font.name if run.font.name else None,
+                    'color': str(run.font.color.rgb) if run.font.color and run.font.color.rgb else None
+                }
+                para_format['runs'].append(run_format)
+        
+        formatted_paragraphs.append(para_format)
+    
+    return formatted_paragraphs
 
 def proofread_text(text):
     """Proofreads text using LanguageTool and returns corrected text with details."""
-    matches = tool.check(text)
-    corrected_text = language_tool_python.utils.correct(text, matches)
+    # Join all paragraph texts for proofreading
+    full_text = "\n".join([para['text'] for para in text])
+    matches = tool.check(full_text)
+    corrected_text = language_tool_python.utils.correct(full_text, matches)
 
     # Collect detailed grammar mistakes
     errors = []
@@ -37,13 +69,52 @@ def proofread_text(text):
             "length": match.errorLength
         })
 
-    return corrected_text, errors
+    # Split the corrected text back into paragraphs
+    corrected_paragraphs = corrected_text.split("\n")
+    
+    # Create a new formatted text with corrections
+    formatted_corrected = []
+    for i, para in enumerate(text):
+        if i < len(corrected_paragraphs):
+            corrected_para = para.copy()
+            corrected_para['text'] = corrected_paragraphs[i]
+            formatted_corrected.append(corrected_para)
+        else:
+            formatted_corrected.append(para)
+    
+    return formatted_corrected, errors
 
-def save_text_to_docx(text, docx_path):
-    """Saves proofread text to a new DOCX file."""
+def save_text_to_docx(formatted_text, docx_path):
+    """Saves proofread text with formatting to a new DOCX file."""
     doc = docx.Document()
-    for line in text.split("\n"):
-        doc.add_paragraph(line)
+    
+    for para_data in formatted_text:
+        p = doc.add_paragraph(para_data['text'])
+        
+        # Apply paragraph-level formatting
+        if para_data.get('style'):
+            p.style = para_data['style']
+        if para_data.get('alignment'):
+            p.alignment = para_data['alignment']
+        
+        # Apply run-level formatting
+        if para_data.get('runs'):
+            # Clear the paragraph text to add formatted runs
+            p.clear()
+            for run_data in para_data['runs']:
+                run = p.add_run(run_data['text'])
+                run.bold = run_data.get('bold', False)
+                run.italic = run_data.get('italic', False)
+                run.underline = run_data.get('underline', False)
+                
+                # Apply font properties if available
+                if run_data.get('font_size'):
+                    run.font.size = docx.shared.Pt(run_data['font_size'])
+                if run_data.get('font_name'):
+                    run.font.name = run_data['font_name']
+                if run_data.get('color'):
+                    run.font.color.rgb = docx.shared.RGBColor.from_string(run_data['color'])
+    
     doc.save(docx_path)
 
 @app.route('/convert', methods=['POST'])
@@ -72,19 +143,19 @@ def convert_pdf_to_docx():
         if not os.path.exists(docx_path):
             return jsonify({"error": "DOCX file was not created"}), 500
 
-        # Extract text from DOCX
-        extracted_text = extract_text_from_docx(docx_path)
+        # Extract text and formatting from DOCX
+        formatted_text = extract_text_from_docx(docx_path)
 
         # Proofread the text
-        proofread_text_content, grammar_errors = proofread_text(extracted_text)
+        proofread_formatted_text, grammar_errors = proofread_text(formatted_text)
 
         # Save proofread text back to DOCX
         proofread_docx_path = os.path.join(OUTPUT_FOLDER, "proofread_" + docx_filename)
-        save_text_to_docx(proofread_text_content, proofread_docx_path)
+        save_text_to_docx(proofread_formatted_text, proofread_docx_path)
 
         return jsonify({
-            "original_text": extracted_text,
-            "proofread_text": proofread_text_content,
+            "original_text": formatted_text,
+            "proofread_text": proofread_formatted_text,
             "grammar_errors": grammar_errors,  # Provide detailed grammar corrections
             "download_url": "/download/" + "proofread_" + docx_filename
         })
