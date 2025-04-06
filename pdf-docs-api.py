@@ -158,7 +158,7 @@ def extract_pdf_formatting(pdf_path):
         
         # Extract text and formatting from each page
         for page_num in range(doc.page_count):
-            page = doc[0]
+            page = doc[page_num]
             page_info = {
                 'text_blocks': [],
                 'images': []
@@ -509,3 +509,4 @@ def download_pdf(filename):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
+
