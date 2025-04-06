@@ -348,131 +348,45 @@ def download_pdf(filename):
             if para.text.strip():
                 proofread_text.append(para.text)
         
-        # Open the original PDF
-        pdf_doc = fitz.open(original_pdf_path)
+        # Create a new PDF using reportlab
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=letter,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=72
+        )
         
-        # Create a new PDF with the same page size and layout
-        output_pdf = fitz.open()
+        # Create styles
+        styles = getSampleStyleSheet()
+        normal_style = ParagraphStyle(
+            'CustomNormal',
+            parent=styles['Normal'],
+            fontSize=11,
+            leading=14,
+            spaceBefore=6,
+            spaceAfter=6
+        )
         
-        # Process each page of the original PDF
-        for page_num in range(pdf_doc.page_count):
-            # Get the original page
-            original_page = pdf_doc[page_num]
-            
-            # Create a new page with the same size
-            new_page = output_pdf.new_page(width=original_page.rect.width, height=original_page.rect.height)
-            
-            # Copy the original page content (background, images, etc.)
-            new_page.show_pdf_page(new_page.rect, pdf_doc, page_num)
-            
-            # Extract text blocks from the original page
-            text_blocks = original_page.get_text("dict")["blocks"]
-            
-            # Create a list to store text positions
-            text_positions = []
-            
-            # Extract text positions from the original page
-            for block in text_blocks:
-                if block.get("type") == 0:  # Text block
-                    for line in block.get("lines", []):
-                        for span in line.get("spans", []):
-                            text_positions.append({
-                                'text': span.get("text", ""),
-                                'bbox': span.get("bbox", (0, 0, 0, 0)),
-                                'font': span.get("font", ""),
-                                'size': span.get("size", 0),
-                                'color': span.get("color", 0),
-                                'bold': "bold" in span.get("font", "").lower(),
-                                'italic': "italic" in span.get("font", "").lower()
-                            })
-            
-            # If we have proofread text and text positions, replace the text
-            if proofread_text and text_positions:
-                # Create a mapping of original text to proofread text
-                text_mapping = {}
-                
-                # Improved mapping: try to match text by similarity
-                # This helps when the text has been corrected and doesn't match exactly
-                for i, pos in enumerate(text_positions):
-                    original_text = pos['text'].strip()
-                    if not original_text:
-                        continue
-                    
-                    # Try to find the best match in the proofread text
-                    best_match_index = -1
-                    best_match_score = 0
-                    
-                    for j, proofread_para in enumerate(proofread_text):
-                        # Simple similarity score based on word overlap
-                        original_words = set(original_text.lower().split())
-                        proofread_words = set(proofread_para.lower().split())
-                        
-                        # Calculate Jaccard similarity
-                        intersection = len(original_words.intersection(proofread_words))
-                        union = len(original_words.union(proofread_words))
-                        
-                        if union > 0:
-                            similarity = intersection / union
-                            if similarity > best_match_score and similarity > 0.3:  # Threshold to avoid false matches
-                                best_match_score = similarity
-                                best_match_index = j
-                    
-                    # If we found a good match, add it to the mapping
-                    if best_match_index >= 0:
-                        text_mapping[original_text] = proofread_text[best_match_index]
-                    # Fallback to index-based mapping if no good match found
-                    elif i < len(proofread_text):
-                        text_mapping[original_text] = proofread_text[i]
-                
-                # Replace text on the page
-                for pos in text_positions:
-                    original_text = pos['text'].strip()
-                    if original_text in text_mapping:
-                        # Create a white rectangle to cover the original text
-                        new_page.draw_rect(pos['bbox'], color=(1, 1, 1), fill=(1, 1, 1))
-                        
-                        # Use a default font if the original font is not available
-                        font_name = "helv"  # Default to Helvetica
-                        
-                        # Insert the proofread text at the same position
-                        try:
-                            new_page.insert_text(
-                                (pos['bbox'][0], pos['bbox'][1] + pos['size'] * 0.8),  # Position text at the top of the bbox
-                                text_mapping[original_text],
-                                fontsize=pos['size'],
-                                color=pos['color'],
-                                fontname=font_name
-                            )
-                        except Exception as e:
-                            # If there's an error with the font, try with a different font
-                            print(f"Font error: {str(e)}")
-                            try:
-                                new_page.insert_text(
-                                    (pos['bbox'][0], pos['bbox'][1] + pos['size'] * 0.8),
-                                    text_mapping[original_text],
-                                    fontsize=pos['size'],
-                                    color=pos['color']
-                                )
-                            except Exception as e2:
-                                print(f"Second font error: {str(e2)}")
-                                # If still failing, just use the most basic approach
-                                new_page.insert_text(
-                                    (pos['bbox'][0], pos['bbox'][1] + pos['size'] * 0.8),
-                                    text_mapping[original_text]
-                                )
+        # Build the document
+        story = []
         
-        # Save the modified PDF to a buffer
-        pdf_buffer = io.BytesIO()
-        output_pdf.save(pdf_buffer)
-        pdf_buffer.seek(0)
+        # Add each paragraph from the proofread text
+        for text in proofread_text:
+            if text.strip():
+                p = Paragraph(text, normal_style)
+                story.append(p)
+                story.append(Spacer(1, 12))  # Add some space between paragraphs
         
-        # Close the PDF documents
-        pdf_doc.close()
-        output_pdf.close()
+        # Build the PDF
+        doc.build(story)
+        buffer.seek(0)
         
         # Return the PDF file
         return send_file(
-            pdf_buffer,
+            buffer,
             mimetype='application/pdf',
             as_attachment=True,
             download_name=original_filename
