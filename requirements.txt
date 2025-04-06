@@ -7,4 +7,3 @@ python-docx
 gunicorn
 logging
 time
-json
