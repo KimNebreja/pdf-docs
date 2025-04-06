@@ -68,13 +68,20 @@ def extract_formatted_content_from_pdf(pdf_path):
                                 "underline": "underline" in font.lower()
                             })
         
+        # Check if we extracted any content
+        if not formatted_content:
+            logger.warning(f"No text content extracted from PDF using PyMuPDF: {pdf_path}")
+            # Try fallback method
+            return extract_formatted_content_fallback(pdf_path)
+            
         return formatted_content
     except ImportError:
         # Fallback to pdf2docx if PyMuPDF is not available
         logger.warning("PyMuPDF not available, falling back to pdf2docx")
         return extract_formatted_content_fallback(pdf_path)
     except Exception as e:
-        logger.error(f"Error extracting formatted content: {str(e)}")
+        logger.error(f"Error extracting formatted content with PyMuPDF: {str(e)}")
+        logger.error(traceback.format_exc())
         # Fallback to pdf2docx
         return extract_formatted_content_fallback(pdf_path)
 
@@ -124,12 +131,35 @@ def extract_formatted_content_fallback(pdf_path):
         # Clean up temporary file
         if os.path.exists(docx_path):
             os.remove(docx_path)
+        
+        # Check if we extracted any content
+        if not formatted_content:
+            logger.warning(f"No text content extracted from PDF using fallback method: {pdf_path}")
+            # Return a message indicating no content could be extracted
+            return [{
+                "text": "No text content could be extracted from this PDF. The file might be scanned, image-based, or password-protected.",
+                "font": "Arial",
+                "size": 12,
+                "color": "#000000",
+                "bold": False,
+                "italic": False,
+                "underline": False
+            }]
             
         return formatted_content
     except Exception as e:
         logger.error(f"Error in fallback extraction: {str(e)}")
-        # Last resort: return plain text
-        return [{"text": "Error extracting formatted content. Please try again.", "font": "Arial", "size": 12, "color": "#000000", "bold": False, "italic": False, "underline": False}]
+        logger.error(traceback.format_exc())
+        # Last resort: return plain text with error message
+        return [{
+            "text": f"Error extracting content: {str(e)}. The PDF might be corrupted or in an unsupported format.",
+            "font": "Arial",
+            "size": 12,
+            "color": "#000000",
+            "bold": False,
+            "italic": False,
+            "underline": False
+        }]
 
 def proofread_text(text):
     """Proofreads text using LanguageTool and returns corrected text with details."""
@@ -186,6 +216,20 @@ def convert_pdf_to_docx():
         # Extract formatted content from PDF
         formatted_content = extract_formatted_content_from_pdf(pdf_path)
         
+        # Check if we got valid content
+        if not formatted_content or len(formatted_content) == 0:
+            logger.warning(f"No content extracted from PDF: {filename}")
+            # Create a fallback content with a message
+            formatted_content = [{
+                "text": "No text content could be extracted from this PDF. The file might be scanned, image-based, or password-protected.",
+                "font": "Arial",
+                "size": 12,
+                "color": "#000000",
+                "bold": False,
+                "italic": False,
+                "underline": False
+            }]
+        
         # Extract plain text for proofreading
         plain_text = " ".join([item["text"] for item in formatted_content])
         
@@ -236,6 +280,7 @@ def convert_pdf_to_docx():
         docx_path = os.path.join(OUTPUT_FOLDER, "proofread_" + docx_filename)
         save_text_to_docx(proofread_text_content, docx_path)
 
+        # Ensure we always return the expected data structure
         return jsonify({
             "original_content": formatted_content,
             "proofread_content": proofread_formatted_content,
@@ -247,7 +292,28 @@ def convert_pdf_to_docx():
     except Exception as e:
         logger.error(f"Conversion error: {str(e)}")
         logger.error(traceback.format_exc())
-        return jsonify({"error": f"Conversion error: {str(e)}"}), 500
+        
+        # Create a fallback response with error information
+        error_message = f"Error processing PDF: {str(e)}"
+        fallback_content = [{
+            "text": error_message,
+            "font": "Arial",
+            "size": 12,
+            "color": "#000000",
+            "bold": False,
+            "italic": False,
+            "underline": False
+        }]
+        
+        # Return a response with the expected structure but with error information
+        return jsonify({
+            "original_content": fallback_content,
+            "proofread_content": fallback_content,
+            "grammar_errors": [],
+            "download_url": "",
+            "file_name": filename,
+            "error": error_message
+        }), 200  # Return 200 to avoid triggering the frontend error handler
 
 @app.route('/download/<filename>')
 def download_file(filename):
