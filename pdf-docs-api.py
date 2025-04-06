@@ -24,23 +24,6 @@ def extract_text_from_docx(docx_path):
     
     for para in doc.paragraphs:
         if not para.text.strip():
-            # Preserve empty paragraphs for spacing
-            formatted_paragraphs.append({
-                'text': '',
-                'style': 'Normal',
-                'alignment': 0,
-                'indent': {
-                    'first_line': 0,
-                    'left': 0,
-                    'right': 0
-                },
-                'spacing': {
-                    'before': para.paragraph_format.space_before.pt if para.paragraph_format.space_before else 0,
-                    'after': para.paragraph_format.space_after.pt if para.paragraph_format.space_after else 0,
-                    'line': para.paragraph_format.line_spacing if para.paragraph_format.line_spacing else 1.0
-                },
-                'runs': []
-            })
             continue
             
         # Extract formatting for each paragraph
@@ -52,11 +35,6 @@ def extract_text_from_docx(docx_path):
                 'first_line': para.paragraph_format.first_line_indent.pt if para.paragraph_format.first_line_indent else 0,
                 'left': para.paragraph_format.left_indent.pt if para.paragraph_format.left_indent else 0,
                 'right': para.paragraph_format.right_indent.pt if para.paragraph_format.right_indent else 0
-            },
-            'spacing': {
-                'before': para.paragraph_format.space_before.pt if para.paragraph_format.space_before else 0,
-                'after': para.paragraph_format.space_after.pt if para.paragraph_format.space_after else 0,
-                'line': para.paragraph_format.line_spacing if para.paragraph_format.line_spacing else 1.0
             },
             'runs': []
         }
