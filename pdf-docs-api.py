@@ -402,14 +402,35 @@ def download_pdf(filename):
                         # Create a white rectangle to cover the original text
                         new_page.draw_rect(pos['bbox'], color=(1, 1, 1), fill=(1, 1, 1))
                         
+                        # Use a default font if the original font is not available
+                        font_name = "helv"  # Default to Helvetica
+                        
                         # Insert the proofread text at the same position
-                        new_page.insert_text(
-                            (pos['bbox'][0], pos['bbox'][1] + pos['size'] * 0.8),  # Position text at the top of the bbox
-                            text_mapping[pos['text']],
-                            fontsize=pos['size'],
-                            color=pos['color'],
-                            fontname=pos['font']
-                        )
+                        try:
+                            new_page.insert_text(
+                                (pos['bbox'][0], pos['bbox'][1] + pos['size'] * 0.8),  # Position text at the top of the bbox
+                                text_mapping[pos['text']],
+                                fontsize=pos['size'],
+                                color=pos['color'],
+                                fontname=font_name
+                            )
+                        except Exception as e:
+                            # If there's an error with the font, try with a different font
+                            print(f"Font error: {str(e)}")
+                            try:
+                                new_page.insert_text(
+                                    (pos['bbox'][0], pos['bbox'][1] + pos['size'] * 0.8),
+                                    text_mapping[pos['text']],
+                                    fontsize=pos['size'],
+                                    color=pos['color']
+                                )
+                            except Exception as e2:
+                                print(f"Second font error: {str(e2)}")
+                                # If still failing, just use the most basic approach
+                                new_page.insert_text(
+                                    (pos['bbox'][0], pos['bbox'][1] + pos['size'] * 0.8),
+                                    text_mapping[pos['text']]
+                                )
         
         # Save the modified PDF to a buffer
         pdf_buffer = io.BytesIO()
