@@ -4,7 +4,7 @@ import os
 import docx
 import language_tool_python
 from pdf2docx import Converter
-from docx2pdf import convert
+import subprocess
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -217,13 +217,15 @@ def convert_to_pdf(filename):
     pdf_path = os.path.join(OUTPUT_FOLDER, pdf_filename)
     
     try:
-        # Convert DOCX to PDF
-        convert(docx_path, pdf_path)
+        # Convert DOCX to PDF using pandoc
+        subprocess.run(['pandoc', docx_path, '-o', pdf_path], check=True)
         
         # Return the PDF file
         return send_file(pdf_path, as_attachment=True)
-    except Exception as e:
+    except subprocess.CalledProcessError as e:
         return jsonify({"error": f"Conversion error: {str(e)}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
