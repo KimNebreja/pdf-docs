@@ -31,11 +31,6 @@ def extract_text_from_docx(docx_path):
             'text': para.text,
             'style': para.style.name if para.style else 'Normal',
             'alignment': para.alignment,
-            'indent': {
-                'first_line': para.paragraph_format.first_line_indent.pt if para.paragraph_format.first_line_indent else 0,
-                'left': para.paragraph_format.left_indent.pt if para.paragraph_format.left_indent else 0,
-                'right': para.paragraph_format.right_indent.pt if para.paragraph_format.right_indent else 0
-            },
             'runs': []
         }
         
