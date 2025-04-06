@@ -191,9 +191,16 @@ def convert_pdf_to_docx():
 @app.route('/download/<filename>')
 def download_file(filename):
     """Handles file download."""
+    # First check in the OUTPUT_FOLDER
     file_path = os.path.join(OUTPUT_FOLDER, filename)
     if os.path.exists(file_path):
         return send_file(file_path, as_attachment=True)
+    
+    # If not found in OUTPUT_FOLDER, check in UPLOAD_FOLDER
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+    if os.path.exists(file_path):
+        return send_file(file_path, as_attachment=True)
+    
     return jsonify({"error": "File not found"}), 404
 
 if __name__ == '__main__':
