@@ -344,9 +344,37 @@ def download_pdf(filename):
         doc = docx.Document(docx_path)
         proofread_text = []
         
+        # Print debug information
+        print(f"Processing DOCX file: {docx_path}")
+        print(f"Number of paragraphs in DOCX: {len(doc.paragraphs)}")
+        
+        # Extract all paragraphs from the DOCX file
         for para in doc.paragraphs:
             if para.text.strip():
                 proofread_text.append(para.text)
+                print(f"Extracted paragraph: {para.text[:50]}...")  # Print first 50 chars of each paragraph
+        
+        print(f"Total proofread paragraphs extracted: {len(proofread_text)}")
+        
+        # If no text was extracted, try to extract from the original PDF
+        if not proofread_text:
+            print("No text extracted from DOCX, trying to extract from original PDF")
+            try:
+                # Open the original PDF
+                pdf_document = fitz.open(original_pdf_path)
+                for page_num in range(len(pdf_document)):
+                    page = pdf_document[page_num]
+                    text = page.get_text()
+                    if text.strip():
+                        proofread_text.append(text)
+                pdf_document.close()
+                print(f"Extracted {len(proofread_text)} pages of text from original PDF")
+            except Exception as e:
+                print(f"Error extracting text from PDF: {str(e)}")
+        
+        # Verify that we have proofread content
+        if not proofread_text:
+            return jsonify({"error": "No proofread content found"}), 500
         
         # Create a new PDF using reportlab
         buffer = io.BytesIO()
@@ -392,6 +420,7 @@ def download_pdf(filename):
             download_name=original_filename
         )
     except Exception as e:
+        print(f"Error in download_pdf: {str(e)}")
         return jsonify({"error": f"Conversion error: {str(e)}"}), 500
 
 if __name__ == '__main__':
