@@ -1,8 +1,6 @@
 flask
 flask-cors
-python-docx
 werkzeug
 gunicorn
 language-tool-python
-pdf2docx
 PyMuPDF
