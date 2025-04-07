@@ -1,9 +1,7 @@
 from flask import Flask, request, send_file, jsonify
 from werkzeug.utils import secure_filename
 import os
-import docx
 import language_tool_python
-from pdf2docx import Converter
 from flask_cors import CORS
 import fitz  # PyMuPDF
 import io
@@ -19,10 +17,14 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 # Using local LanguageTool instance for more accuracy
 tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online API
 
-def extract_text_from_docx(docx_path):
-    """Extracts text from a DOCX file."""
-    doc = docx.Document(docx_path)
-    return "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+def extract_text_from_pdf(pdf_path):
+    """Extracts text from a PDF file."""
+    doc = fitz.open(pdf_path)
+    text = []
+    for page in doc:
+        text.append(page.get_text())
+    doc.close()
+    return "\n".join(text)
 
 def proofread_text(text):
     """Proofreads text using LanguageTool and returns corrected text with details."""
@@ -47,71 +49,83 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     Uses PyMuPDF to maintain the exact positioning and formatting of the original PDF.
     """
     try:
-        # Open the original PDF
-        doc = fitz.open(original_pdf_path)
+        # Create a new PDF
+        doc = fitz.open()
         
-        # Create a copy of the original PDF
-        doc.save(pdf_path)
-        doc.close()
+        # Get formatting from original PDF
+        orig_doc = fitz.open(original_pdf_path)
         
-        # Reopen the new PDF for editing
-        doc = fitz.open(pdf_path)
-        
-        # Get the text blocks from the original PDF to maintain formatting
-        original_blocks = []
-        for page in doc:
-            blocks = page.get_text("dict")["blocks"]
-            original_blocks.extend([(block, page.number) for block in blocks if "lines" in block])
-        
-        # Split the proofread text into words
-        proofread_words = text.split()
-        word_index = 0
-        
-        # For each text block in the original PDF
-        for block, page_num in original_blocks:
-            if word_index >= len(proofread_words):
-                break
+        # For each page in original
+        for page_num in range(len(orig_doc)):
+            # Create new page with same dimensions
+            orig_page = orig_doc[page_num]
+            page = doc.new_page(width=orig_page.rect.width, height=orig_page.rect.height)
+            
+            # Get original formatting
+            blocks = orig_page.get_text("dict")["blocks"]
+            
+            # Split the proofread text into words if not already split
+            if isinstance(text, str):
+                proofread_words = text.split()
+            else:
+                proofread_words = text
+            word_index = 0
+            
+            # Process each text block
+            for block in blocks:
+                if "lines" not in block or word_index >= len(proofread_words):
+                    continue
                 
-            page = doc[page_num]
-            
-            # Get the block's position and formatting
-            x0 = block["bbox"][0]
-            y0 = block["bbox"][1]
-            
-            # Create a new text block with proofread content
-            block_words = []
-            for line in block["lines"]:
-                for span in line["spans"]:
-                    span_word_count = len(span["text"].split())
-                    # Get the corresponding number of words from proofread text
-                    if word_index + span_word_count <= len(proofread_words):
-                        new_text = " ".join(proofread_words[word_index:word_index + span_word_count])
-                        block_words.append(new_text)
-                        word_index += span_word_count
-            
-            if block_words:
-                # Create a new text insertion
-                text_to_insert = " ".join(block_words)
-                # Use the original position and font
-                page.insert_text(
-                    (x0, y0),
-                    text_to_insert,
-                    fontname="helv",  # Use Helvetica as default
-                    fontsize=11,  # Default size, adjust if needed
-                    color=(0, 0, 0)  # Black color
+                # Calculate total words in this block
+                block_word_count = sum(
+                    len(span["text"].split())
+                    for line in block["lines"]
+                    for span in line["spans"]
                 )
+                
+                # Get the text for this block
+                if word_index + block_word_count <= len(proofread_words):
+                    block_text = " ".join(proofread_words[word_index:word_index + block_word_count])
+                    
+                    # Get the first span's formatting as reference
+                    first_span = block["lines"][0]["spans"][0]
+                    x0 = first_span["origin"][0]
+                    y0 = first_span["origin"][1]
+                    
+                    try:
+                        # Insert text with original properties
+                        page.insert_text(
+                            (x0, y0),
+                            block_text,
+                            fontname=first_span.get("font", "helv"),
+                            fontsize=first_span.get("size", 11),
+                            color=first_span.get("color", (0, 0, 0))
+                        )
+                    except Exception as e:
+                        print(f"Warning: Could not insert text with original font, using fallback. Error: {str(e)}")
+                        # Fallback to basic font if original font fails
+                        page.insert_text(
+                            (x0, y0),
+                            block_text,
+                            fontname="helv",
+                            fontsize=first_span.get("size", 11),
+                            color=first_span.get("color", (0, 0, 0))
+                        )
+                    
+                    word_index += block_word_count
         
-        # Save the modified PDF
-        doc.save(pdf_path, garbage=4, deflate=True)
+        # Save the modified PDF with maximum quality
+        doc.save(pdf_path, garbage=4, deflate=True, clean=True)
         doc.close()
+        orig_doc.close()
             
     except Exception as e:
         print(f"Error creating PDF: {str(e)}")
         raise e
 
 @app.route('/convert', methods=['POST'])
-def convert_pdf_to_docx():
-    """Handles PDF-to-DOCX conversion and proofreading."""
+def convert_and_proofread():
+    """Handles PDF proofreading."""
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
 
@@ -123,26 +137,15 @@ def convert_pdf_to_docx():
     pdf_path = os.path.join(UPLOAD_FOLDER, filename)
     file.save(pdf_path)
 
-    docx_filename = filename.rsplit('.', 1)[0] + '.docx'
-    docx_path = os.path.join(OUTPUT_FOLDER, docx_filename)
-
     try:
-        # Convert PDF to DOCX
-        cv = Converter(pdf_path)
-        cv.convert(docx_path, start=0, end=None)  # Ensure full document conversion
-        cv.close()
-
-        if not os.path.exists(docx_path):
-            return jsonify({"error": "DOCX file was not created"}), 500
-
-        # Extract text from DOCX
-        extracted_text = extract_text_from_docx(docx_path)
+        # Extract text directly from PDF
+        extracted_text = extract_text_from_pdf(pdf_path)
 
         # Proofread the text
         proofread_text_content, grammar_errors = proofread_text(extracted_text)
 
-        # Save proofread text back to PDF instead of DOCX
-        proofread_pdf_filename = "proofread_" + filename.rsplit('.', 1)[0] + '.pdf'
+        # Save proofread text back to PDF
+        proofread_pdf_filename = "proofread_" + filename
         proofread_pdf_path = os.path.join(OUTPUT_FOLDER, proofread_pdf_filename)
         save_text_to_pdf(proofread_text_content, proofread_pdf_path, pdf_path)
 
