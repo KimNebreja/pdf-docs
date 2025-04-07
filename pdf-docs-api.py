@@ -5,11 +5,7 @@ import docx
 import language_tool_python
 from pdf2docx import Converter
 from flask_cors import CORS
-from PyPDF2 import PdfReader, PdfWriter
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+import fitz  # PyMuPDF
 import io
 
 app = Flask(__name__)
@@ -48,76 +44,70 @@ def proofread_text(text):
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     Saves proofread text to a new PDF file while preserving the original PDF formatting.
-    This is a simplified approach - for a production system, you might want to use
-    more sophisticated PDF manipulation libraries.
+    Uses PyMuPDF to maintain the exact positioning and formatting of the original PDF.
     """
     try:
-        # Create a new PDF with the proofread text
-        packet = io.BytesIO()
-        can = canvas.Canvas(packet, pagesize=letter)
-        width, height = letter
+        # Open the original PDF
+        doc = fitz.open(original_pdf_path)
         
-        # Set font and size
-        can.setFont("Helvetica", 12)
+        # Create a copy of the original PDF
+        doc.save(pdf_path)
+        doc.close()
         
-        # Split text into lines and write to PDF
-        lines = text.split('\n')
-        y = height - 50  # Start from top with margin
+        # Reopen the new PDF for editing
+        doc = fitz.open(pdf_path)
         
-        for line in lines:
-            if y < 50:  # If we're near the bottom, start a new page
-                can.showPage()
-                can.setFont("Helvetica", 12)
-                y = height - 50
+        # Get the text blocks from the original PDF to maintain formatting
+        original_blocks = []
+        for page in doc:
+            blocks = page.get_text("dict")["blocks"]
+            original_blocks.extend([(block, page.number) for block in blocks if "lines" in block])
+        
+        # Split the proofread text into words
+        proofread_words = text.split()
+        word_index = 0
+        
+        # For each text block in the original PDF
+        for block, page_num in original_blocks:
+            if word_index >= len(proofread_words):
+                break
+                
+            page = doc[page_num]
             
-            can.drawString(50, y, line)
-            y -= 15  # Line spacing
+            # Get the block's position and formatting
+            x0 = block["bbox"][0]
+            y0 = block["bbox"][1]
+            
+            # Create a new text block with proofread content
+            block_words = []
+            for line in block["lines"]:
+                for span in line["spans"]:
+                    span_word_count = len(span["text"].split())
+                    # Get the corresponding number of words from proofread text
+                    if word_index + span_word_count <= len(proofread_words):
+                        new_text = " ".join(proofread_words[word_index:word_index + span_word_count])
+                        block_words.append(new_text)
+                        word_index += span_word_count
+            
+            if block_words:
+                # Create a new text insertion
+                text_to_insert = " ".join(block_words)
+                # Use the original position and font
+                page.insert_text(
+                    (x0, y0),
+                    text_to_insert,
+                    fontname="helv",  # Use Helvetica as default
+                    fontsize=11,  # Default size, adjust if needed
+                    color=(0, 0, 0)  # Black color
+                )
         
-        can.save()
-        
-        # Move to the beginning of the BytesIO buffer
-        packet.seek(0)
-        
-        # Create a new PDF with the proofread text
-        new_pdf = PdfReader(packet)
-        
-        # Get the original PDF
-        original_pdf = PdfReader(original_pdf_path)
-        
-        # Create a PDF writer object
-        output = PdfWriter()
-        
-        # Add the first page from the new PDF (with our text)
-        output.add_page(new_pdf.pages[0])
-        
-        # If the original PDF has more than one page, add them
-        if len(original_pdf.pages) > 1:
-            for i in range(1, len(original_pdf.pages)):
-                output.add_page(original_pdf.pages[i])
-        
-        # Write the output to a file
-        with open(pdf_path, "wb") as output_file:
-            output.write(output_file)
+        # Save the modified PDF
+        doc.save(pdf_path, garbage=4, deflate=True)
+        doc.close()
             
     except Exception as e:
         print(f"Error creating PDF: {str(e)}")
-        # Fallback to a simple PDF creation if the above method fails
-        c = canvas.Canvas(pdf_path, pagesize=letter)
-        c.setFont("Helvetica", 12)
-        
-        lines = text.split('\n')
-        y = 750  # Start from top
-        
-        for line in lines:
-            if y < 50:  # If we're near the bottom, start a new page
-                c.showPage()
-                c.setFont("Helvetica", 12)
-                y = 750
-            
-            c.drawString(50, y, line)
-            y -= 15  # Line spacing
-        
-        c.save()
+        raise e
 
 @app.route('/convert', methods=['POST'])
 def convert_pdf_to_docx():
