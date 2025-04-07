@@ -4,3 +4,5 @@ werkzeug
 gunicorn
 language-tool-python
 PyMuPDF
+reportlab
+pdfplumber
