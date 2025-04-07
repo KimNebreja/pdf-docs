@@ -10,6 +10,12 @@ from reportlab.lib.colors import Color
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import io
+import logging
+import re
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
@@ -24,13 +30,64 @@ tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online AP
 
 def extract_text_from_pdf(pdf_path):
     """Extracts text from a PDF file with advanced formatting preservation."""
-    doc = fitz.open(pdf_path)
-    text = []
-    for page in doc:
-        # Extract text with formatting information
-        text.append(page.get_text())
-    doc.close()
-    return "\n".join(text)
+    try:
+        doc = fitz.open(pdf_path)
+        text = []
+        for page in doc:
+            # Extract text with formatting information
+            text.append(page.get_text())
+        doc.close()
+        return "\n".join(text)
+    except Exception as e:
+        logger.error(f"Error extracting text from PDF: {str(e)}")
+        raise
+
+def extract_text_with_formatting(pdf_path):
+    """
+    Extracts text with detailed formatting information using pdfplumber.
+    Returns a list of dictionaries with text and formatting details.
+    """
+    try:
+        result = []
+        with pdfplumber.open(pdf_path) as pdf:
+            for page_num, page in enumerate(pdf.pages):
+                # Extract text with detailed formatting
+                words = page.extract_words(
+                    keep_blank_chars=True,
+                    x_tolerance=3,
+                    y_tolerance=3,
+                    extra_attrs=['fontname', 'size', 'upright']
+                )
+                
+                # Group words into lines based on y-position
+                lines = {}
+                for word in words:
+                    y_pos = round(word['top'], 1)  # Round to 1 decimal place for grouping
+                    if y_pos not in lines:
+                        lines[y_pos] = []
+                    lines[y_pos].append(word)
+                
+                # Sort lines by y-position (top to bottom)
+                sorted_lines = sorted(lines.items(), key=lambda x: x[0])
+                
+                # Process each line
+                for y_pos, line_words in sorted_lines:
+                    # Sort words in line by x-position (left to right)
+                    line_words.sort(key=lambda x: x['x0'])
+                    
+                    # Create a line object with formatting
+                    line_obj = {
+                        'text': ' '.join([w['text'] for w in line_words]),
+                        'words': line_words,
+                        'y_pos': y_pos,
+                        'page': page_num
+                    }
+                    result.append(line_obj)
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error extracting text with formatting: {str(e)}")
+        raise
 
 def get_text_color(page, bbox):
     """Extracts the color of text at a specific position with advanced precision."""
@@ -51,25 +108,29 @@ def get_text_color(page, bbox):
                                 return span["stroke"]
         return None
     except Exception as e:
-        print(f"Error getting text color: {str(e)}")
+        logger.warning(f"Error getting text color: {str(e)}")
         return None
 
 def proofread_text(text):
     """Proofreads text using LanguageTool and returns corrected text with details."""
-    matches = tool.check(text)
-    corrected_text = language_tool_python.utils.correct(text, matches)
+    try:
+        matches = tool.check(text)
+        corrected_text = language_tool_python.utils.correct(text, matches)
 
-    # Collect detailed grammar mistakes
-    errors = []
-    for match in matches:
-        errors.append({
-            "message": match.message,
-            "suggestions": match.replacements,
-            "offset": match.offset,
-            "length": match.errorLength
-        })
+        # Collect detailed grammar mistakes
+        errors = []
+        for match in matches:
+            errors.append({
+                "message": match.message,
+                "suggestions": match.replacements,
+                "offset": match.offset,
+                "length": match.errorLength
+            })
 
-    return corrected_text, errors
+        return corrected_text, errors
+    except Exception as e:
+        logger.error(f"Error proofreading text: {str(e)}")
+        raise
 
 def normalize_color(color):
     """
@@ -120,37 +181,112 @@ def normalize_color(color):
         # Default to black for unknown types
         return (0, 0, 0)
     except Exception as e:
-        print(f"Error normalizing color {color}: {str(e)}")
+        logger.warning(f"Error normalizing color {color}: {str(e)}")
         return (0, 0, 0)  # Default to black on error
 
 def get_font_name(font_name):
-    """Normalizes font names with advanced mapping."""
+    """Normalizes font names with advanced mapping and fallback mechanism."""
+    if not font_name:
+        return "Helvetica"  # Default font
+        
+    # Clean up font name
+    font_name = font_name.lower().strip()
+    
+    # Remove common prefixes and suffixes
+    font_name = re.sub(r'^[a-z]+[_-]', '', font_name)
+    font_name = re.sub(r'[_-][a-z]+$', '', font_name)
+    
+    # Map common font names
     font_map = {
         "helv": "Helvetica",
+        "helvetica": "Helvetica",
+        "arial": "Helvetica",
         "tiro": "Times-Roman",
+        "times": "Times-Roman",
+        "timesroman": "Times-Roman",
+        "times new roman": "Times-Roman",
+        "timesnewroman": "Times-Roman",
         "helvetica-bold": "Helvetica-Bold",
+        "helveticabold": "Helvetica-Bold",
+        "arial-bold": "Helvetica-Bold",
+        "arialbold": "Helvetica-Bold",
         "times-bold": "Times-Bold",
+        "timesbold": "Times-Bold",
         "times-italic": "Times-Italic",
+        "timesitalic": "Times-Italic",
         "times-bolditalic": "Times-BoldItalic",
+        "timesbolditalic": "Times-BoldItalic",
         "courier": "Courier",
         "courier-bold": "Courier-Bold",
+        "courierbold": "Courier-Bold",
         "courier-italic": "Courier-Oblique",
+        "courieritalic": "Courier-Oblique",
         "courier-bolditalic": "Courier-BoldOblique",
+        "courierbolditalic": "Courier-BoldOblique",
         "symbol": "Symbol",
         "zapfdingbats": "ZapfDingbats"
     }
     
     # Check if font name is in our mapping
-    if font_name.lower() in font_map:
-        return font_map[font_name.lower()]
+    if font_name in font_map:
+        return font_map[font_name]
     
     # Check if font name contains any of our mapped names
     for key in font_map:
-        if key.lower() in font_name.lower():
+        if key in font_name:
             return font_map[key]
+    
+    # Check for bold/italic variants
+    if "bold" in font_name and "italic" in font_name:
+        return "Times-BoldItalic"
+    elif "bold" in font_name:
+        return "Helvetica-Bold"
+    elif "italic" in font_name or "oblique" in font_name:
+        return "Times-Italic"
     
     # Default to Helvetica if no match
     return "Helvetica"
+
+def register_fonts():
+    """Registers common fonts with ReportLab."""
+    try:
+        # Register standard fonts
+        pdfmetrics.registerFontFamily(
+            'Helvetica',
+            normal='Helvetica',
+            bold='Helvetica-Bold',
+            italic='Helvetica-Oblique',
+            boldItalic='Helvetica-BoldOblique'
+        )
+        
+        pdfmetrics.registerFontFamily(
+            'Times-Roman',
+            normal='Times-Roman',
+            bold='Times-Bold',
+            italic='Times-Italic',
+            boldItalic='Times-BoldItalic'
+        )
+        
+        pdfmetrics.registerFontFamily(
+            'Courier',
+            normal='Courier',
+            bold='Courier-Bold',
+            italic='Courier-Oblique',
+            boldItalic='Courier-BoldOblique'
+        )
+        
+        # Try to register additional fonts if available
+        try:
+            # Check if Arial font is available
+            arial_path = os.path.join(os.environ.get('WINDIR', ''), 'Fonts', 'arial.ttf')
+            if os.path.exists(arial_path):
+                TTFont('Arial', arial_path)
+                logger.info("Registered Arial font")
+        except Exception as e:
+            logger.warning(f"Could not register additional fonts: {str(e)}")
+            
+    except Exception as e:
+        logger.warning(f"Error registering fonts: {str(e)}")
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
@@ -158,6 +294,9 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     and reportlab for PDF generation with advanced positioning and color handling.
     """
     try:
+        # Register fonts
+        register_fonts()
+        
         # Open the original PDF with both pdfplumber and PyMuPDF
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
@@ -170,7 +309,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             # Create a new PDF with reportlab
             c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
             
-            # Split text into paragraphs
+            # Extract text with formatting
+            formatted_text = extract_text_with_formatting(original_pdf_path)
+            
+            # Split text into paragraphs for proofreading
             if isinstance(text, str):
                 paragraphs = text.split('\n')
             else:
@@ -181,31 +323,34 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             
             # Process each page
             for page_num, (page, mupdf_page) in enumerate(zip(pdf.pages, doc)):
-                print(f"\nProcessing page {page_num + 1}")
+                logger.info(f"Processing page {page_num + 1}")
                 
-                # Extract text objects with their formatting
-                text_objects = page.extract_words(
-                    keep_blank_chars=True,
-                    x_tolerance=3,
-                    y_tolerance=3,
-                    extra_attrs=['fontname', 'size']
-                )
+                # Get lines for this page
+                page_lines = [line for line in formatted_text if line['page'] == page_num]
                 
-                # Process each text object
-                for obj in text_objects:
+                # Process each line
+                for line in page_lines:
                     if current_paragraph >= len(paragraphs):
                         break
                     
                     # Save canvas state
                     c.saveState()
                     
-                    # Get text properties
-                    x0, y0 = obj['x0'], obj['top']
-                    font = get_font_name(obj.get('fontname', 'Helvetica'))
-                    fontsize = float(obj.get('size', 11))
+                    # Get line properties
+                    y_pos = line['y_pos']
                     
-                    # Get color from original PDF with improved extraction
-                    bbox = fitz.Rect(x0, y0, x0 + obj['width'], y0 + obj['height'])
+                    # Process each word in the line
+                    x_pos = line['words'][0]['x0']  # Start with the first word's x position
+                    
+                    # Get the first word's properties for the line
+                    first_word = line['words'][0]
+                    font = get_font_name(first_word.get('fontname', 'Helvetica'))
+                    fontsize = float(first_word.get('size', 11))
+                    
+                    # Get color from original PDF
+                    bbox = fitz.Rect(first_word['x0'], first_word['top'], 
+                                    first_word['x0'] + first_word['width'], 
+                                    first_word['top'] + first_word['height'])
                     color = get_text_color(mupdf_page, bbox)
                     if color:
                         r, g, b = normalize_color(color)
@@ -225,11 +370,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     leading = fontsize * 1.5  # Standard leading is 1.5x font size
                     
                     # Adjust position for better alignment
-                    y_pos = page_height - y0 - text_height/2 + baseline_offset  # Center text vertically with baseline adjustment
-                    x_pos = x0  # Keep original x position
+                    y_pos_adjusted = page_height - y_pos - text_height/2 + baseline_offset
                     
                     # Draw text with improved positioning
-                    text_object = c.beginText(x_pos, y_pos)
+                    text_object = c.beginText(x_pos, y_pos_adjusted)
                     text_object.setFont(font, fontsize)
                     text_object.setFillColor(fill_color)
                     text_object.textLine(paragraphs[current_paragraph])
@@ -245,10 +389,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             # Save the PDF
             c.save()
             doc.close()
-            print("PDF saved successfully")
+            logger.info("PDF saved successfully")
             
     except Exception as e:
-        print(f"Error creating PDF: {str(e)}")
+        logger.error(f"Error creating PDF: {str(e)}")
         raise e
 
 @app.route('/convert', methods=['POST'])
@@ -285,6 +429,7 @@ def convert_and_proofread():
         })
 
     except Exception as e:
+        logger.error(f"Conversion error: {str(e)}")
         return jsonify({"error": f"Conversion error: {str(e)}"}), 500
 
 @app.route('/download/<filename>')
