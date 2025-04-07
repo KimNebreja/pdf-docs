@@ -4,6 +4,11 @@ import os
 import language_tool_python
 from flask_cors import CORS
 import fitz  # PyMuPDF
+import pdfplumber
+from reportlab.pdfgen import canvas
+from reportlab.lib.colors import Color
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 import io
 
 app = Flask(__name__)
@@ -18,13 +23,36 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online API
 
 def extract_text_from_pdf(pdf_path):
-    """Extracts text from a PDF file."""
+    """Extracts text from a PDF file with advanced formatting preservation."""
     doc = fitz.open(pdf_path)
     text = []
     for page in doc:
+        # Extract text with formatting information
         text.append(page.get_text())
     doc.close()
     return "\n".join(text)
+
+def get_text_color(page, bbox):
+    """Extracts the color of text at a specific position with advanced precision."""
+    try:
+        # Get text spans in the area with more detailed extraction
+        spans = page.get_text("dict", clip=bbox)["blocks"]
+        for block in spans:
+            if "lines" in block:
+                for line in block["lines"]:
+                    if "spans" in line:
+                        for span in line["spans"]:
+                            # Check for multiple color attributes with priority
+                            if "color" in span:
+                                return span["color"]
+                            elif "fill" in span:
+                                return span["fill"]
+                            elif "stroke" in span:
+                                return span["stroke"]
+        return None
+    except Exception as e:
+        print(f"Error getting text color: {str(e)}")
+        return None
 
 def proofread_text(text):
     """Proofreads text using LanguageTool and returns corrected text with details."""
@@ -43,81 +71,181 @@ def proofread_text(text):
 
     return corrected_text, errors
 
-def save_text_to_pdf(text, pdf_path, original_pdf_path):
+def normalize_color(color):
     """
-    Saves proofread text to a new PDF file while preserving the original PDF formatting.
-    Uses PyMuPDF to maintain the exact positioning and formatting of the original PDF.
+    Normalizes color values to RGB format in range 0-1 with advanced handling.
+    Returns a tuple of (r, g, b) values.
     """
     try:
-        # Create a new PDF
-        doc = fitz.open()
-        
-        # Get formatting from original PDF
-        orig_doc = fitz.open(original_pdf_path)
-        
-        # For each page in original
-        for page_num in range(len(orig_doc)):
-            # Create new page with same dimensions
-            orig_page = orig_doc[page_num]
-            page = doc.new_page(width=orig_page.rect.width, height=orig_page.rect.height)
+        if color is None:
+            return (0, 0, 0)  # Default to black
             
-            # Get original formatting
-            blocks = orig_page.get_text("dict")["blocks"]
+        # If color is already a tuple/list of RGB values
+        if isinstance(color, (tuple, list)):
+            if len(color) >= 3:
+                # Convert to range 0-1 if needed
+                r = float(color[0]) / 255 if color[0] > 1 else float(color[0])
+                g = float(color[1]) / 255 if color[1] > 1 else float(color[1])
+                b = float(color[2]) / 255 if color[2] > 1 else float(color[2])
+                # Ensure values are in range 0-1
+                r = max(0.0, min(1.0, r))
+                g = max(0.0, min(1.0, g))
+                b = max(0.0, min(1.0, b))
+                return (r, g, b)
+        
+        # If color is a single value (grayscale)
+        if isinstance(color, (int, float)):
+            val = float(color) / 255 if color > 1 else float(color)
+            val = max(0.0, min(1.0, val))
+            return (val, val, val)
+        
+        # If color is a hex string
+        if isinstance(color, str) and color.startswith('#'):
+            # Convert hex to RGB
+            color = color.lstrip('#')
+            r = int(color[0:2], 16) / 255.0
+            g = int(color[2:4], 16) / 255.0
+            b = int(color[4:6], 16) / 255.0
+            return (r, g, b)
+        
+        # If color is a CMYK value
+        if isinstance(color, (tuple, list)) and len(color) == 4:
+            c, m, y, k = color
+            # Convert CMYK to RGB
+            r = 1 - min(1, c * (1 - k) + k)
+            g = 1 - min(1, m * (1 - k) + k)
+            b = 1 - min(1, y * (1 - k) + k)
+            return (r, g, b)
+        
+        # Default to black for unknown types
+        return (0, 0, 0)
+    except Exception as e:
+        print(f"Error normalizing color {color}: {str(e)}")
+        return (0, 0, 0)  # Default to black on error
+
+def get_font_name(font_name):
+    """Normalizes font names with advanced mapping."""
+    font_map = {
+        "helv": "Helvetica",
+        "tiro": "Times-Roman",
+        "helvetica-bold": "Helvetica-Bold",
+        "times-bold": "Times-Bold",
+        "times-italic": "Times-Italic",
+        "times-bolditalic": "Times-BoldItalic",
+        "courier": "Courier",
+        "courier-bold": "Courier-Bold",
+        "courier-italic": "Courier-Oblique",
+        "courier-bolditalic": "Courier-BoldOblique",
+        "symbol": "Symbol",
+        "zapfdingbats": "ZapfDingbats"
+    }
+    
+    # Check if font name is in our mapping
+    if font_name.lower() in font_map:
+        return font_map[font_name.lower()]
+    
+    # Check if font name contains any of our mapped names
+    for key in font_map:
+        if key.lower() in font_name.lower():
+            return font_map[key]
+    
+    # Default to Helvetica if no match
+    return "Helvetica"
+
+def save_text_to_pdf(text, pdf_path, original_pdf_path):
+    """
+    Saves proofread text to a new PDF file using pdfplumber for text extraction
+    and reportlab for PDF generation with advanced positioning and color handling.
+    """
+    try:
+        # Open the original PDF with both pdfplumber and PyMuPDF
+        with pdfplumber.open(original_pdf_path) as pdf:
+            doc = fitz.open(original_pdf_path)
             
-            # Split the proofread text into words if not already split
+            # Get page dimensions from the first page
+            first_page = pdf.pages[0]
+            page_width = first_page.width
+            page_height = first_page.height
+            
+            # Create a new PDF with reportlab
+            c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
+            
+            # Split text into paragraphs
             if isinstance(text, str):
-                proofread_words = text.split()
+                paragraphs = text.split('\n')
             else:
-                proofread_words = text
-            word_index = 0
+                paragraphs = text
             
-            # Process each text block
-            for block in blocks:
-                if "lines" not in block or word_index >= len(proofread_words):
-                    continue
+            # Track current paragraph
+            current_paragraph = 0
+            
+            # Process each page
+            for page_num, (page, mupdf_page) in enumerate(zip(pdf.pages, doc)):
+                print(f"\nProcessing page {page_num + 1}")
                 
-                # Calculate total words in this block
-                block_word_count = sum(
-                    len(span["text"].split())
-                    for line in block["lines"]
-                    for span in line["spans"]
+                # Extract text objects with their formatting
+                text_objects = page.extract_words(
+                    keep_blank_chars=True,
+                    x_tolerance=3,
+                    y_tolerance=3,
+                    extra_attrs=['fontname', 'size']
                 )
                 
-                # Get the text for this block
-                if word_index + block_word_count <= len(proofread_words):
-                    block_text = " ".join(proofread_words[word_index:word_index + block_word_count])
+                # Process each text object
+                for obj in text_objects:
+                    if current_paragraph >= len(paragraphs):
+                        break
                     
-                    # Get the first span's formatting as reference
-                    first_span = block["lines"][0]["spans"][0]
-                    x0 = first_span["origin"][0]
-                    y0 = first_span["origin"][1]
+                    # Save canvas state
+                    c.saveState()
                     
-                    try:
-                        # Insert text with original properties
-                        page.insert_text(
-                            (x0, y0),
-                            block_text,
-                            fontname=first_span.get("font", "helv"),
-                            fontsize=first_span.get("size", 11),
-                            color=first_span.get("color", (0, 0, 0))
-                        )
-                    except Exception as e:
-                        print(f"Warning: Could not insert text with original font, using fallback. Error: {str(e)}")
-                        # Fallback to basic font if original font fails
-                        page.insert_text(
-                            (x0, y0),
-                            block_text,
-                            fontname="helv",
-                            fontsize=first_span.get("size", 11),
-                            color=first_span.get("color", (0, 0, 0))
-                        )
+                    # Get text properties
+                    x0, y0 = obj['x0'], obj['top']
+                    font = get_font_name(obj.get('fontname', 'Helvetica'))
+                    fontsize = float(obj.get('size', 11))
                     
-                    word_index += block_word_count
-        
-        # Save the modified PDF with maximum quality
-        doc.save(pdf_path, garbage=4, deflate=True, clean=True)
-        doc.close()
-        orig_doc.close()
+                    # Get color from original PDF with improved extraction
+                    bbox = fitz.Rect(x0, y0, x0 + obj['width'], y0 + obj['height'])
+                    color = get_text_color(mupdf_page, bbox)
+                    if color:
+                        r, g, b = normalize_color(color)
+                        fill_color = Color(r, g, b)
+                    else:
+                        fill_color = Color(0, 0, 0)  # Default to black
+                    
+                    # Calculate text metrics for better positioning
+                    c.setFont(font, fontsize)
+                    text_width = c.stringWidth(paragraphs[current_paragraph], font, fontsize)
+                    text_height = fontsize * 1.2  # Approximate height
+                    
+                    # Calculate baseline position for better text alignment
+                    baseline_offset = fontsize * 0.2  # Approximate baseline offset
+                    
+                    # Calculate leading (line spacing) based on font size
+                    leading = fontsize * 1.5  # Standard leading is 1.5x font size
+                    
+                    # Adjust position for better alignment
+                    y_pos = page_height - y0 - text_height/2 + baseline_offset  # Center text vertically with baseline adjustment
+                    x_pos = x0  # Keep original x position
+                    
+                    # Draw text with improved positioning
+                    text_object = c.beginText(x_pos, y_pos)
+                    text_object.setFont(font, fontsize)
+                    text_object.setFillColor(fill_color)
+                    text_object.textLine(paragraphs[current_paragraph])
+                    c.drawText(text_object)
+                    current_paragraph += 1
+                    
+                    # Restore canvas state
+                    c.restoreState()
+                
+                # Move to next page
+                c.showPage()
+            
+            # Save the PDF
+            c.save()
+            doc.close()
+            print("PDF saved successfully")
             
     except Exception as e:
         print(f"Error creating PDF: {str(e)}")
