@@ -5,5 +5,4 @@ werkzeug
 gunicorn
 language-tool-python
 pdf2docx
-PyPDF2
-reportlab
+PyMuPDF
