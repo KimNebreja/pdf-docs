@@ -6,3 +6,4 @@ language-tool-python
 PyMuPDF
 reportlab
 pdfplumber
+logging
