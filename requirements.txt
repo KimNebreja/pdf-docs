@@ -7,4 +7,3 @@ PyMuPDF
 reportlab
 pdfplumber
 logging
-numpy
