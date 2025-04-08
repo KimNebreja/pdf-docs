@@ -7,3 +7,5 @@ PyMuPDF
 reportlab
 pdfplumber
 logging
+numpy
+collections
