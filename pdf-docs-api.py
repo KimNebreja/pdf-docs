@@ -705,62 +705,103 @@ def extract_text_with_formatting(pdf_path):
                 page_width = page.rect.width
                 page_dict = page.get_text("dict")
                 
-                if not isinstance(page_dict, dict) or "blocks" not in page_dict:
-                    logger.warning(f"Invalid page dictionary format on page {page_num}")
+                if not isinstance(page_dict, dict):
+                    logger.warning(f"Invalid page dictionary format on page {page_num}: not a dictionary")
                     continue
                     
-                blocks = page_dict["blocks"]
+                blocks = page_dict.get("blocks", [])
+                if not isinstance(blocks, list):
+                    logger.warning(f"Invalid blocks format on page {page_num}: not a list")
+                    continue
                 
                 for block in blocks:
                     if not isinstance(block, dict):
                         continue
                         
-                    if block.get("type") == 0:  # text block
+                    block_type = block.get("type")
+                    if block_type is None:
+                        logger.warning(f"Block type is None on page {page_num}")
+                        continue
+                        
+                    if block_type == 0:  # text block
                         lines = []
                         text_lines = []
                         
-                        for line in block.get("lines", []):
+                        block_lines = block.get("lines", [])
+                        if not isinstance(block_lines, list):
+                            continue
+                        
+                        for line in block_lines:
                             if not isinstance(line, dict):
                                 continue
                                 
                             line_text = ""
                             line_spans = []
                             
-                            for span in line.get("spans", []):
+                            spans = line.get("spans", [])
+                            if not isinstance(spans, list):
+                                continue
+                            
+                            for span in spans:
                                 if not isinstance(span, dict):
                                     continue
                                     
-                                span_text = span.get("text", "").strip()
+                                span_text = span.get("text", "")
+                                if not isinstance(span_text, str):
+                                    continue
+                                    
+                                span_text = span_text.strip()
                                 if span_text:
-                                    font_info = {
-                                        "size": float(span.get("size", 0)),
-                                        "font": str(span.get("font", "")),
-                                        "color": span.get("color", 0)
-                                    }
+                                    try:
+                                        font_info = {
+                                            "size": float(span.get("size", 0)),
+                                            "font": str(span.get("font", "")),
+                                            "color": span.get("color", 0)
+                                        }
+                                    except (ValueError, TypeError) as e:
+                                        logger.warning(f"Error converting font info on page {page_num}: {str(e)}")
+                                        font_info = {
+                                            "size": 0,
+                                            "font": "",
+                                            "color": 0
+                                        }
+                                    
+                                    bbox = span.get("bbox", [0, 0, 0, 0])
+                                    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                                        bbox = [0, 0, 0, 0]
+                                    
                                     line_spans.append({
                                         "text": span_text,
                                         "font_info": font_info,
-                                        "bbox": span.get("bbox", [0, 0, 0, 0])
+                                        "bbox": bbox
                                     })
                                     line_text += span_text + " "
                             
                             if line_text.strip():
                                 text_lines.append(line_text.strip())
+                                line_bbox = line.get("bbox", [0, 0, 0, 0])
+                                if not isinstance(line_bbox, (list, tuple)) or len(line_bbox) != 4:
+                                    line_bbox = [0, 0, 0, 0]
+                                
                                 lines.append({
                                     "text": line_text.strip(),
                                     "spans": line_spans,
-                                    "bbox": line.get("bbox", [0, 0, 0, 0])
+                                    "bbox": line_bbox
                                 })
                         
                         if lines:
                             block_text = "\n".join(text_lines)
+                            block_bbox = block.get("bbox", [0, 0, 0, 0])
+                            if not isinstance(block_bbox, (list, tuple)) or len(block_bbox) != 4:
+                                block_bbox = [0, 0, 0, 0]
+                            
                             formatted_text.append({
                                 "text": block_text,
                                 "lines": lines,
                                 "block_info": {
                                     "page_num": page_num,
                                     "page_width": float(page_width),
-                                    "bbox": block.get("bbox", [0, 0, 0, 0])
+                                    "bbox": block_bbox
                                 }
                             })
             except Exception as page_error:
