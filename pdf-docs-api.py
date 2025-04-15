@@ -441,7 +441,20 @@ def get_text_color(page, bbox):
             if "spans" in block:
                 for span in block["spans"]:
                     if "color" in span:
-                        return span["color"]
+                        color_val = span["color"]
+                        # Handle integer color representation from PyMuPDF
+                        if isinstance(color_val, int):
+                            r = color_val >> 16
+                            g = (color_val >> 8) & 0xFF
+                            b = color_val & 0xFF
+                            return (r, g, b)
+                        # Assume it's already an RGB tuple/list if not an int
+                        elif isinstance(color_val, (tuple, list)) and len(color_val) >= 3:
+                            # Ensure values are integers if they are floats (e.g., from other sources)
+                            return tuple(int(c) for c in color_val[:3]) 
+                        else:
+                            logger.warning(f"Unexpected color format found: {color_val}")
+                            return None # Return None for unexpected formats
         return None
     except Exception as e:
         logger.error(f"Error getting text color: {str(e)}")
