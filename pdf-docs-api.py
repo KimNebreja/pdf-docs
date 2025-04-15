@@ -421,44 +421,73 @@ def detect_paragraphs(formatted_text):
 
 def get_text_color(page, bbox):
     """
-    Extract text color from a PDF page using PyMuPDF.
-    
-    Args:
-        page: PyMuPDF page object
-        bbox: Bounding box of the text (fitz.Rect)
-        
-    Returns:
-        Tuple of (r, g, b) values or None if color cannot be determined
+    Get the text color from a specific region in the PDF page.
+    Returns RGB tuple or None if color cannot be determined.
     """
     try:
-        # Get text spans in the bounding box
-        spans = page.get_text("dict", clip=bbox)["blocks"]
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            logger.warning(f"Invalid bbox format in get_text_color: {bbox}")
+            return None
+            
+        x0, y0, x1, y1 = map(float, bbox)
+        rect = fitz.Rect(x0, y0, x1, y1)
+        
+        # Extract text blocks in the region
+        blocks = page.get_text("dict", clip=rect).get('blocks', [])
+        
+        if not blocks:
+            return None
+            
+        # Get spans from the first block
+        spans = blocks[0].get('lines', [{}])[0].get('spans', [])
+        
         if not spans:
             return None
             
-        # Get the first span's color
-        for block in spans:
-            if "spans" in block:
-                for span in block["spans"]:
-                    if "color" in span:
-                        color_val = span["color"]
-                        # Handle integer color representation from PyMuPDF
-                        if isinstance(color_val, int):
-                            r = color_val >> 16
-                            g = (color_val >> 8) & 0xFF
-                            b = color_val & 0xFF
-                            return (r, g, b)
-                        # Assume it's already an RGB tuple/list if not an int
-                        elif isinstance(color_val, (tuple, list)) and len(color_val) >= 3:
-                            # Ensure values are integers if they are floats (e.g., from other sources)
-                            return tuple(int(c) for c in color_val[:3]) 
-                        else:
-                            logger.warning(f"Unexpected color format found: {color_val}")
-                            return None # Return None for unexpected formats
-        return None
+        # Get color from the first span
+        color = spans[0].get('color')
+        
+        if not color:
+            return None
+            
+        return color
+        
     except Exception as e:
         logger.error(f"Error getting text color: {str(e)}")
         return None
+
+def normalize_color(color):
+    """
+    Normalize color values to RGB format (0-1 range).
+    Returns tuple of (r, g, b) values.
+    """
+    try:
+        if not isinstance(color, (list, tuple)) or len(color) < 3:
+            logger.warning(f"Invalid color format: {color}")
+            return (0, 0, 0)  # Default to black
+            
+        # Extract RGB values
+        r, g, b = color[:3]
+        
+        # Ensure values are numeric
+        try:
+            r = float(r)
+            g = float(g)
+            b = float(b)
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid color values: {color}")
+            return (0, 0, 0)
+            
+        # Normalize values to 0-1 range
+        r = max(0, min(1, r))
+        g = max(0, min(1, g))
+        b = max(0, min(1, b))
+        
+        return (r, g, b)
+        
+    except Exception as e:
+        logger.error(f"Error normalizing color: {str(e)}")
+        return (0, 0, 0)  # Default to black
 
 def proofread_text(text):
     """Proofreads text using LanguageTool and returns corrected text with details."""
@@ -480,24 +509,6 @@ def proofread_text(text):
     except Exception as e:
         logger.error(f"Error proofreading text: {str(e)}")
         raise
-
-def normalize_color(color):
-    """
-    Normalize color values to 0-1 range for ReportLab.
-    
-    Args:
-        color: Tuple of (r, g, b) values in 0-255 range
-        
-    Returns:
-        Tuple of (r, g, b) values in 0-1 range
-    """
-    try:
-        if not color:
-            return (0, 0, 0)
-        return tuple(c / 255.0 for c in color)
-    except Exception as e:
-        logger.error(f"Error normalizing color: {str(e)}")
-        return (0, 0, 0)
 
 def get_font_name(font_name):
     """Normalizes font names with advanced mapping and fallback mechanism."""
@@ -804,10 +815,8 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 
                 try:
                     # Get paragraphs for this page
-                    page_paragraphs = []
-                    for p in paragraphs:
-                        if p.get('block_info', {}).get('page_num') == page_num:
-                            page_paragraphs.append(p)
+                    page_paragraphs = [p for p in paragraphs if isinstance(p, dict) and 
+                                     p.get('block_info', {}).get('page_num') == page_num]
                     
                     # Process each paragraph
                     for paragraph in page_paragraphs:
@@ -829,7 +838,8 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                                 try:
                                     # Get line properties from bbox
                                     bbox = line.get('bbox', [0, 0, 0, 0])
-                                    if len(bbox) != 4:
+                                    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                                        logger.warning(f"Invalid bbox format: {bbox}")
                                         continue
                                         
                                     x_pos = float(bbox[0])
@@ -837,19 +847,17 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                                     
                                     # Get the first span's properties
                                     spans = line.get('spans', [])
-                                    if not spans:
+                                    if not spans or not isinstance(spans[0], dict):
                                         continue
                                         
                                     first_span = spans[0]
-                                    if not isinstance(first_span, dict):
-                                        continue
                                     
-                                    # Get font and size
+                                    # Get font and size with defaults
                                     font_info = first_span.get('font_info', {})
                                     font = get_font_name(font_info.get('font', 'Helvetica'))
                                     fontsize = float(font_info.get('size', 11))
                                     
-                                    # Get color
+                                    # Get color with default black
                                     color = get_text_color(mupdf_page, bbox)
                                     if color:
                                         r, g, b = normalize_color(color)
@@ -866,7 +874,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                                     baseline_offset = fontsize * 0.2
                                     y_pos_adjusted = page_height - y_pos - text_height/2 + baseline_offset
                                     
-                                    # Get alignment
+                                    # Get alignment with default left
                                     alignment = paragraph.get('alignment', {}).get('type', 'left')
                                     
                                     # Adjust position based on alignment
