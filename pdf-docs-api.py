@@ -41,41 +41,79 @@ def extract_text_from_pdf(pdf_path):
         if not os.path.exists(pdf_path):
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
-        doc = fitz.open(pdf_path)
+        if not os.path.isfile(pdf_path):
+            raise ValueError(f"Path is not a file: {pdf_path}")
+
+        # Check if file is readable
+        try:
+            with open(pdf_path, 'rb') as f:
+                pass
+        except Exception as e:
+            raise IOError(f"File is not readable: {str(e)}")
+
+        # Try to open PDF with PyMuPDF
+        try:
+            doc = fitz.open(pdf_path)
+        except Exception as e:
+            raise ValueError(f"Could not open PDF file: {str(e)}")
+
+        if not doc:
+            raise ValueError("Failed to open PDF document")
+
         text = []
         
         if doc.page_count == 0:
+            doc.close()
             raise ValueError("PDF file is empty or corrupted")
             
         for page_num in range(doc.page_count):
             try:
                 page = doc[page_num]
+                if not page:
+                    logger.warning(f"Could not access page {page_num}")
+                    text.append("")
+                    continue
+
                 # Extract text with formatting information
-                page_text = page.get_text()
+                try:
+                    page_text = page.get_text()
+                except Exception as text_error:
+                    logger.error(f"Error extracting text from page {page_num}: {str(text_error)}")
+                    text.append("")
+                    continue
+
                 if isinstance(page_text, str):
                     text.append(page_text)
                 else:
                     logger.warning(f"Unexpected text type on page {page_num}: {type(page_text)}")
                     text.append("")
+
             except Exception as page_error:
-                logger.error(f"Error extracting text from page {page_num}: {str(page_error)}")
+                logger.error(f"Error processing page {page_num}: {str(page_error)}")
                 text.append("")
                 continue
                 
-        doc.close()
+        try:
+            doc.close()
+        except Exception as close_error:
+            logger.warning(f"Error closing PDF document: {str(close_error)}")
         
         # Join text with newlines and ensure it's a string
         final_text = "\n".join(text)
         if not isinstance(final_text, str):
             raise TypeError(f"Expected string output, got {type(final_text)}")
             
-        if not final_text.strip():
+        final_text = final_text.strip()
+        if not final_text:
             return "No text content found in PDF"
             
         return final_text
         
-    except Exception as e:
+    except (FileNotFoundError, ValueError, IOError, TypeError) as e:
         logger.error(f"Error extracting text from PDF: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error extracting text from PDF: {str(e)}")
         raise ValueError(f"Failed to extract text from PDF: {str(e)}")
 
 def detect_tables(page):
@@ -1205,48 +1243,86 @@ def detect_alignment(lines, page_width):
 
 @app.route('/convert', methods=['POST'])
 def convert_and_proofread():
-    """Handles PDF proofreading."""
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-
-    filename = secure_filename(file.filename)
-    pdf_path = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(pdf_path)
-
+    """Endpoint to convert and proofread a PDF file."""
     try:
-        # Extract text directly from PDF
-        extracted_text = extract_text_from_pdf(pdf_path)
+        # Check if file was uploaded
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+            
+        file = request.files['file']
+        if not file or not file.filename:
+            return jsonify({'error': 'Invalid file'}), 400
 
-        # Save proofread text back to PDF (without proofreading for now)
-        proofread_pdf_filename = "proofread_" + filename
-        proofread_pdf_path = os.path.join(OUTPUT_FOLDER, proofread_pdf_filename)
-        save_text_to_pdf(extracted_text, proofread_pdf_path, pdf_path)  # Using original text instead of proofread text
+        # Validate file type
+        if not file.content_type == 'application/pdf':
+            return jsonify({'error': 'Only PDF files are allowed'}), 400
 
-        # Get the base URL for the download link
-        base_url = request.host_url.rstrip('/')
-        
-        return jsonify({
-            "original_text": extracted_text,
-            "proofread_text": extracted_text,  # Using original text for now
-            "grammar_errors": [],  # Empty list since we're not proofreading
-            "download_url": f"{base_url}/download/{proofread_pdf_filename}",
-            "alignment_info": {
-                'left': 0,
-                'right': 0,
-                'center': 0,
-                'justified': 0,
-                'indented': 0,
-                'mixed': 0
+        # Ensure upload directories exist
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+        # Save uploaded file
+        try:
+            filename = secure_filename(file.filename)
+            upload_path = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(upload_path)
+            
+            if not os.path.exists(upload_path):
+                raise IOError("Failed to save uploaded file")
+                
+        except Exception as save_error:
+            logger.error(f"Error saving uploaded file: {str(save_error)}")
+            return jsonify({'error': f'Upload error: {str(save_error)}'}), 400
+
+        # Extract text from PDF
+        try:
+            original_text = extract_text_from_pdf(upload_path)
+            if not isinstance(original_text, str):
+                raise TypeError(f"Expected string output from PDF extraction, got {type(original_text)}")
+            if not original_text.strip():
+                raise ValueError("No text content found in PDF")
+        except Exception as extract_error:
+            logger.error(f"Error extracting text: {str(extract_error)}")
+            return jsonify({'error': f'Extraction error: {str(extract_error)}'}), 400
+
+        # Create proofread filename and path
+        proofread_filename = f"proofread_{filename}"
+        proofread_path = os.path.join(OUTPUT_FOLDER, proofread_filename)
+
+        # Save proofread text back to PDF
+        try:
+            save_text_to_pdf(original_text, proofread_path, upload_path)
+            if not os.path.exists(proofread_path):
+                raise IOError("Failed to create proofread PDF")
+        except Exception as save_error:
+            logger.error(f"Error saving proofread PDF: {str(save_error)}")
+            return jsonify({'error': f'Conversion error: {str(save_error)}'}), 400
+
+        # Prepare response with validated data
+        try:
+            download_url = f"/download/{proofread_filename}"
+            response_data = {
+                'original_text': original_text,
+                'proofread_text': original_text,  # Currently using original text
+                'download_url': download_url
             }
-        })
+            return jsonify(response_data), 200
+            
+        except Exception as response_error:
+            logger.error(f"Error preparing response: {str(response_error)}")
+            return jsonify({'error': f'Response error: {str(response_error)}'}), 500
 
     except Exception as e:
-        logger.error(f"Conversion error: {str(e)}")
-        return jsonify({"error": f"Conversion error: {str(e)}"}), 500
+        logger.error(f"Unexpected server error: {str(e)}")
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
+        
+    finally:
+        # Cleanup uploaded files
+        try:
+            if 'upload_path' in locals() and os.path.exists(upload_path):
+                os.remove(upload_path)
+        except Exception as cleanup_error:
+            logger.warning(f"Error during cleanup: {str(cleanup_error)}")
 
 @app.route('/download/<filename>')
 def download_file(filename):
