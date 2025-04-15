@@ -18,7 +18,6 @@ import re
 import json
 import numpy as np
 from collections import defaultdict
-import statistics
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -28,7 +27,7 @@ app = Flask(__name__)
 CORS(app)
 
 UPLOAD_FOLDER = "uploads"
-OUTPUT_FOLDER = "processed_files"
+OUTPUT_FOLDER = "/tmp"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
@@ -38,83 +37,16 @@ tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online AP
 def extract_text_from_pdf(pdf_path):
     """Extracts text from a PDF file with advanced formatting preservation."""
     try:
-        if not os.path.exists(pdf_path):
-            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-
-        if not os.path.isfile(pdf_path):
-            raise ValueError(f"Path is not a file: {pdf_path}")
-
-        # Check if file is readable
-        try:
-            with open(pdf_path, 'rb') as f:
-                pass
-        except Exception as e:
-            raise IOError(f"File is not readable: {str(e)}")
-
-        # Try to open PDF with PyMuPDF
-        try:
-            doc = fitz.open(pdf_path)
-        except Exception as e:
-            raise ValueError(f"Could not open PDF file: {str(e)}")
-
-        if not doc:
-            raise ValueError("Failed to open PDF document")
-
+        doc = fitz.open(pdf_path)
         text = []
-        
-        if doc.page_count == 0:
-            doc.close()
-            raise ValueError("PDF file is empty or corrupted")
-            
-        for page_num in range(doc.page_count):
-            try:
-                page = doc[page_num]
-                if not page:
-                    logger.warning(f"Could not access page {page_num}")
-                    text.append("")
-                    continue
-
-                # Extract text with formatting information
-                try:
-                    page_text = page.get_text()
-                except Exception as text_error:
-                    logger.error(f"Error extracting text from page {page_num}: {str(text_error)}")
-                    text.append("")
-                    continue
-
-                if isinstance(page_text, str):
-                    text.append(page_text)
-                else:
-                    logger.warning(f"Unexpected text type on page {page_num}: {type(page_text)}")
-                    text.append("")
-
-            except Exception as page_error:
-                logger.error(f"Error processing page {page_num}: {str(page_error)}")
-                text.append("")
-                continue
-                
-        try:
-            doc.close()
-        except Exception as close_error:
-            logger.warning(f"Error closing PDF document: {str(close_error)}")
-        
-        # Join text with newlines and ensure it's a string
-        final_text = "\n".join(text)
-        if not isinstance(final_text, str):
-            raise TypeError(f"Expected string output, got {type(final_text)}")
-            
-        final_text = final_text.strip()
-        if not final_text:
-            return "No text content found in PDF"
-            
-        return final_text
-        
-    except (FileNotFoundError, ValueError, IOError, TypeError) as e:
+        for page in doc:
+            # Extract text with formatting information
+            text.append(page.get_text())
+        doc.close()
+        return "\n".join(text)
+    except Exception as e:
         logger.error(f"Error extracting text from PDF: {str(e)}")
         raise
-    except Exception as e:
-        logger.error(f"Unexpected error extracting text from PDF: {str(e)}")
-        raise ValueError(f"Failed to extract text from PDF: {str(e)}")
 
 def detect_tables(page):
     """
@@ -388,144 +320,80 @@ def detect_lists(lines):
         logger.warning(f"Error detecting lists: {str(e)}")
         return []
 
-def detect_paragraphs(formatted_text):
+def detect_paragraphs(lines):
     """
-    Groups text blocks into paragraphs based on their position and formatting.
-    Returns a list of paragraph objects with text and formatting information.
+    Detects paragraphs in a list of lines based on spacing and formatting.
+    Returns a list of paragraph objects.
     """
-    paragraphs = []
-    current_paragraph = None
-    
-    for block in formatted_text:
-        block_info = block.get('block_info', {})
-        lines = block.get('lines', [])
-        alignment = block.get('alignment', {})
+    try:
+        paragraphs = []
+        current_paragraph = []
         
-        # Skip empty blocks
-        if not lines:
-            continue
-        
-        # Start a new paragraph if:
-        # 1. No current paragraph
-        # 2. Different alignment
-        # 3. Significant vertical gap
-        # 4. First line is indented but current paragraph's last line isn't
-        if current_paragraph is None:
-            current_paragraph = {
-                'text': block['text'],
-                'lines': lines,
-                'alignment': alignment,
-                'block_info': block_info
-            }
-        else:
-            prev_block_info = current_paragraph.get('block_info', {})
-            vertical_gap = block_info.get('y0', 0) - prev_block_info.get('y1', 0)
-            
+        for i, line in enumerate(lines):
             # Check if this is a new paragraph
-            if (vertical_gap > 20 or  # Significant vertical gap
-                alignment['type'] != current_paragraph['alignment']['type'] or  # Different alignment
-                (alignment.get('indented', False) and not current_paragraph['alignment'].get('indented', False))):  # Indentation change
+            is_new_paragraph = False
+            
+            # Check for empty line (double line break)
+            if i > 0 and line['y_pos'] - lines[i-1]['y_pos'] > lines[i-1]['words'][0]['height'] * 2:
+                is_new_paragraph = True
                 
-                # Save current paragraph
-                paragraphs.append(current_paragraph)
+            # Check for indentation
+            if i > 0 and line['words'][0]['x0'] > lines[i-1]['words'][0]['x0'] + 20:
+                is_new_paragraph = True
                 
-                # Start new paragraph
-                current_paragraph = {
-                    'text': block['text'],
-                    'lines': lines,
-                    'alignment': alignment,
-                    'block_info': block_info
-                }
-            else:
-                # Append to current paragraph
-                current_paragraph['text'] += '\n' + block['text']
-                current_paragraph['lines'].extend(lines)
+            # Check for different formatting (font, size, color)
+            if i > 0 and len(current_paragraph) > 0:
+                prev_word = current_paragraph[-1]['words'][0]
+                curr_word = line['words'][0]
                 
-                # Update block info to span both blocks
-                current_paragraph['block_info'] = {
-                    'x0': min(prev_block_info.get('x0', float('inf')), block_info.get('x0', float('inf'))),
-                    'x1': max(prev_block_info.get('x1', 0), block_info.get('x1', 0)),
-                    'y0': prev_block_info.get('y0', 0),
-                    'y1': block_info.get('y1', 0),
-                    'width': max(prev_block_info.get('width', 0), block_info.get('width', 0)),
-                    'page_width': block_info.get('page_width', 0)
-                }
-    
-    # Add the last paragraph
-    if current_paragraph:
-        paragraphs.append(current_paragraph)
-    
-    return paragraphs
+                if (prev_word.get('fontname') != curr_word.get('fontname') or
+                    abs(prev_word.get('size', 0) - curr_word.get('size', 0)) > 2):
+                    is_new_paragraph = True
+                    
+            # If this is a new paragraph, save the current one and start a new one
+            if is_new_paragraph and current_paragraph:
+                paragraphs.append({
+                    'lines': current_paragraph,
+                    'text': ' '.join([l['text'] for l in current_paragraph])
+                })
+                current_paragraph = []
+                
+            # Add this line to the current paragraph
+            current_paragraph.append(line)
+            
+        # Add the last paragraph
+        if current_paragraph:
+            paragraphs.append({
+                'lines': current_paragraph,
+                'text': ' '.join([l['text'] for l in current_paragraph])
+            })
+            
+        return paragraphs
+    except Exception as e:
+        logger.warning(f"Error detecting paragraphs: {str(e)}")
+        return [{'lines': lines, 'text': ' '.join([l['text'] for l in lines])}]
 
 def get_text_color(page, bbox):
-    """
-    Get the text color from a specific region in the PDF page.
-    Returns RGB tuple or None if color cannot be determined.
-    """
+    """Extracts the color of text at a specific position with advanced precision."""
     try:
-        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
-            logger.warning(f"Invalid bbox format in get_text_color: {bbox}")
-            return None
-            
-        x0, y0, x1, y1 = map(float, bbox)
-        rect = fitz.Rect(x0, y0, x1, y1)
-        
-        # Extract text blocks in the region
-        blocks = page.get_text("dict", clip=rect).get('blocks', [])
-        
-        if not blocks:
-            return None
-            
-        # Get spans from the first block
-        spans = blocks[0].get('lines', [{}])[0].get('spans', [])
-        
-        if not spans:
-            return None
-            
-        # Get color from the first span
-        color = spans[0].get('color')
-        
-        if not color:
-            return None
-            
-        return color
-        
-    except Exception as e:
-        logger.error(f"Error getting text color: {str(e)}")
+        # Get text spans in the area with more detailed extraction
+        spans = page.get_text("dict", clip=bbox)["blocks"]
+        for block in spans:
+            if "lines" in block:
+                for line in block["lines"]:
+                    if "spans" in line:
+                        for span in line["spans"]:
+                            # Check for multiple color attributes with priority
+                            if "color" in span:
+                                return span["color"]
+                            elif "fill" in span:
+                                return span["fill"]
+                            elif "stroke" in span:
+                                return span["stroke"]
         return None
-
-def normalize_color(color):
-    """
-    Normalize color values to RGB format (0-1 range).
-    Returns tuple of (r, g, b) values.
-    """
-    try:
-        if not isinstance(color, (list, tuple)) or len(color) < 3:
-            logger.warning(f"Invalid color format: {color}")
-            return (0, 0, 0)  # Default to black
-            
-        # Extract RGB values
-        r, g, b = color[:3]
-        
-        # Ensure values are numeric
-        try:
-            r = float(r)
-            g = float(g)
-            b = float(b)
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid color values: {color}")
-            return (0, 0, 0)
-            
-        # Normalize values to 0-1 range
-        r = max(0, min(1, r))
-        g = max(0, min(1, g))
-        b = max(0, min(1, b))
-        
-        return (r, g, b)
-        
     except Exception as e:
-        logger.error(f"Error normalizing color: {str(e)}")
-        return (0, 0, 0)  # Default to black
+        logger.warning(f"Error getting text color: {str(e)}")
+        return None
 
 def proofread_text(text):
     """Proofreads text using LanguageTool and returns corrected text with details."""
@@ -547,6 +415,58 @@ def proofread_text(text):
     except Exception as e:
         logger.error(f"Error proofreading text: {str(e)}")
         raise
+
+def normalize_color(color):
+    """
+    Normalizes color values to RGB format in range 0-1 with advanced handling.
+    Returns a tuple of (r, g, b) values.
+    """
+    try:
+        if color is None:
+            return (0, 0, 0)  # Default to black
+            
+        # If color is already a tuple/list of RGB values
+        if isinstance(color, (tuple, list)):
+            if len(color) >= 3:
+                # Convert to range 0-1 if needed
+                r = float(color[0]) / 255 if color[0] > 1 else float(color[0])
+                g = float(color[1]) / 255 if color[1] > 1 else float(color[1])
+                b = float(color[2]) / 255 if color[2] > 1 else float(color[2])
+                # Ensure values are in range 0-1
+                r = max(0.0, min(1.0, r))
+                g = max(0.0, min(1.0, g))
+                b = max(0.0, min(1.0, b))
+                return (r, g, b)
+        
+        # If color is a single value (grayscale)
+        if isinstance(color, (int, float)):
+            val = float(color) / 255 if color > 1 else float(color)
+            val = max(0.0, min(1.0, val))
+            return (val, val, val)
+        
+        # If color is a hex string
+        if isinstance(color, str) and color.startswith('#'):
+            # Convert hex to RGB
+            color = color.lstrip('#')
+            r = int(color[0:2], 16) / 255.0
+            g = int(color[2:4], 16) / 255.0
+            b = int(color[4:6], 16) / 255.0
+            return (r, g, b)
+        
+        # If color is a CMYK value
+        if isinstance(color, (tuple, list)) and len(color) == 4:
+            c, m, y, k = color
+            # Convert CMYK to RGB
+            r = 1 - min(1, c * (1 - k) + k)
+            g = 1 - min(1, m * (1 - k) + k)
+            b = 1 - min(1, y * (1 - k) + k)
+            return (r, g, b)
+        
+        # Default to black for unknown types
+        return (0, 0, 0)
+    except Exception as e:
+        logger.warning(f"Error normalizing color {color}: {str(e)}")
+        return (0, 0, 0)  # Default to black on error
 
 def get_font_name(font_name):
     """Normalizes font names with advanced mapping and fallback mechanism."""
@@ -729,127 +649,117 @@ def create_table(c, table_data, x, y, width, height, font, fontsize, fill_color)
         logger.warning(f"Error creating table: {str(e)}")
 
 def extract_text_with_formatting(pdf_path):
-    """Extract text with formatting information from a PDF file."""
+    """
+    Extracts text with detailed formatting information using pdfplumber.
+    Returns a list of dictionaries with text and formatting details.
+    """
     try:
-        if not os.path.exists(pdf_path):
-            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-
-        doc = fitz.open(pdf_path)
-        formatted_text = []
+        result = []
         
-        for page_num in range(len(doc)):
-            try:
-                page = doc[page_num]
-                page_width = page.rect.width
-                page_dict = page.get_text("dict")
+        # Detect headers and footers
+        header_footer_info = detect_headers_footers(pdf_path)
+        
+        with pdfplumber.open(pdf_path) as pdf:
+            for page_num, page in enumerate(pdf.pages):
+                # Detect tables
+                tables = detect_tables(page)
                 
-                if not isinstance(page_dict, dict):
-                    logger.warning(f"Invalid page dictionary format on page {page_num}: not a dictionary")
-                    continue
+                # Detect columns
+                columns = detect_columns(page)
+                
+                # Extract text with detailed formatting
+                words = page.extract_words(
+                    keep_blank_chars=True,
+                    x_tolerance=3,
+                    y_tolerance=3,
+                    extra_attrs=['fontname', 'size', 'upright']
+                )
+                
+                # Group words into lines based on y-position
+                lines = {}
+                for word in words:
+                    y_pos = round(word['top'], 1)  # Round to 1 decimal place for grouping
+                    if y_pos not in lines:
+                        lines[y_pos] = []
+                    lines[y_pos].append(word)
+                
+                # Sort lines by y-position (top to bottom)
+                sorted_lines = sorted(lines.items(), key=lambda x: x[0])
+                
+                # Process each line
+                for y_pos, line_words in sorted_lines:
+                    # Sort words in line by x-position (left to right)
+                    line_words.sort(key=lambda x: x['x0'])
                     
-                blocks = page_dict.get("blocks", [])
-                if not isinstance(blocks, list):
-                    logger.warning(f"Invalid blocks format on page {page_num}: not a list")
-                    continue
-                
-                for block in blocks:
-                    if not isinstance(block, dict):
-                        continue
-                        
-                    block_type = block.get("type")
-                    if block_type is None:
-                        logger.warning(f"Block type is None on page {page_num}")
-                        continue
-                        
-                    if block_type == 0:  # text block
-                        lines = []
-                        text_lines = []
-                        
-                        block_lines = block.get("lines", [])
-                        if not isinstance(block_lines, list):
-                            continue
-                        
-                        for line in block_lines:
-                            if not isinstance(line, dict):
-                                continue
-                                
-                            line_text = ""
-                            line_spans = []
+                    # Create a line object with formatting
+                    line_obj = {
+                        'text': ' '.join([w['text'] for w in line_words]),
+                        'words': line_words,
+                        'y_pos': y_pos,
+                        'page': page_num,
+                        'is_table': False,
+                        'is_column': False,
+                        'is_header': False,
+                        'is_footer': False
+                    }
+                    
+                    # Check if this line is part of a table
+                    for table in tables:
+                        if (table['bbox'][1] <= y_pos <= table['bbox'][3] and
+                            table['bbox'][0] <= line_words[0]['x0'] <= table['bbox'][2]):
+                            line_obj['is_table'] = True
+                            line_obj['table_data'] = table['data']
+                            break
                             
-                            spans = line.get("spans", [])
-                            if not isinstance(spans, list):
-                                continue
+                    # Check if this line is part of a column
+                    for column in columns:
+                        if (column['y0'] <= y_pos <= column['y1'] and
+                            column['x0'] <= line_words[0]['x0'] <= column['x1']):
+                            line_obj['is_column'] = True
+                            line_obj['column'] = column
+                            break
                             
-                            for span in spans:
-                                if not isinstance(span, dict):
-                                    continue
-                                    
-                                span_text = span.get("text", "")
-                                if not isinstance(span_text, str):
-                                    continue
-                                    
-                                span_text = span_text.strip()
-                                if span_text:
-                                    try:
-                                        font_info = {
-                                            "size": float(span.get("size", 0)),
-                                            "font": str(span.get("font", "")),
-                                            "color": span.get("color", 0)
-                                        }
-                                    except (ValueError, TypeError) as e:
-                                        logger.warning(f"Error converting font info on page {page_num}: {str(e)}")
-                                        font_info = {
-                                            "size": 0,
-                                            "font": "",
-                                            "color": 0
-                                        }
-                                    
-                                    bbox = span.get("bbox", [0, 0, 0, 0])
-                                    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
-                                        bbox = [0, 0, 0, 0]
-                                    
-                                    line_spans.append({
-                                        "text": span_text,
-                                        "font_info": font_info,
-                                        "bbox": bbox
-                                    })
-                                    line_text += span_text + " "
+                    # Check if this line is a header
+                    for header in header_footer_info['headers']:
+                        if (header['region'][1] <= y_pos <= header['region'][3] and
+                            header['region'][0] <= line_words[0]['x0'] <= header['region'][2]):
+                            line_obj['is_header'] = True
+                            break
                             
-                            if line_text.strip():
-                                text_lines.append(line_text.strip())
-                                line_bbox = line.get("bbox", [0, 0, 0, 0])
-                                if not isinstance(line_bbox, (list, tuple)) or len(line_bbox) != 4:
-                                    line_bbox = [0, 0, 0, 0]
-                                
-                                lines.append({
-                                    "text": line_text.strip(),
-                                    "spans": line_spans,
-                                    "bbox": line_bbox
-                                })
-                        
-                        if lines:
-                            block_text = "\n".join(text_lines)
-                            block_bbox = block.get("bbox", [0, 0, 0, 0])
-                            if not isinstance(block_bbox, (list, tuple)) or len(block_bbox) != 4:
-                                block_bbox = [0, 0, 0, 0]
+                    # Check if this line is a footer
+                    for footer in header_footer_info['footers']:
+                        if (footer['region'][1] <= y_pos <= footer['region'][3] and
+                            footer['region'][0] <= line_words[0]['x0'] <= footer['region'][2]):
+                            line_obj['is_footer'] = True
+                            break
                             
-                            formatted_text.append({
-                                "text": block_text,
-                                "lines": lines,
-                                "block_info": {
-                                    "page_num": page_num,
-                                    "page_width": float(page_width),
-                                    "bbox": block_bbox
-                                }
-                            })
-            except Exception as page_error:
-                logger.error(f"Error processing page {page_num}: {str(page_error)}")
-                continue
+                    result.append(line_obj)
         
-        doc.close()
-        return formatted_text
+        # Detect paragraphs
+        paragraphs = detect_paragraphs(result)
+        
+        # Detect lists
+        lists = detect_lists(result)
+        
+        # Add paragraph and list information to the result
+        for line in result:
+            # Find which paragraph this line belongs to
+            for i, paragraph in enumerate(paragraphs):
+                if line in paragraph['lines']:
+                    line['paragraph_index'] = i
+                    break
+                    
+            # Find which list this line belongs to
+            for i, list_obj in enumerate(lists):
+                for item in list_obj['items']:
+                    if line['line_index'] == item['line_index']:
+                        line['list_index'] = i
+                        line['list_type'] = list_obj['type']
+                        break
+                        
+        return result
     except Exception as e:
-        logger.error(f"Error extracting formatted text from PDF: {str(e)}")
+        logger.error(f"Error extracting text with formatting: {str(e)}")
         raise
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
@@ -879,6 +789,12 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             # Detect paragraphs
             paragraphs = detect_paragraphs(formatted_text)
             
+            # Detect lists
+            lists = detect_lists(formatted_text)
+            
+            # Detect headers and footers
+            header_footer_info = detect_headers_footers(original_pdf_path)
+            
             # Split text into paragraphs for proofreading
             if isinstance(text, str):
                 proofread_paragraphs = text.split('\n')
@@ -892,102 +808,156 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             for page_num, (page, mupdf_page) in enumerate(zip(pdf.pages, doc)):
                 logger.info(f"Processing page {page_num + 1}")
                 
-                try:
-                    # Get paragraphs for this page
-                    page_paragraphs = [p for p in paragraphs if isinstance(p, dict) and 
-                                     p.get('block_info', {}).get('page_num') == page_num]
-                    
-                    # Process each paragraph
-                    for paragraph in page_paragraphs:
+                # Get lines for this page
+                page_lines = [line for line in formatted_text if line['page'] == page_num]
+                
+                # Get paragraphs for this page
+                page_paragraphs = [p for p in paragraphs if p['lines'][0]['page'] == page_num]
+                
+                # Get lists for this page
+                page_lists = [l for l in lists if l['items'][0]['line_index'] < len(page_lines) and 
+                             page_lines[l['items'][0]['line_index']]['page'] == page_num]
+                
+                # Process each paragraph
+                for paragraph in page_paragraphs:
+                    if current_paragraph >= len(proofread_paragraphs):
+                        break
+                        
+                    # Check if this is a table
+                    if paragraph['lines'][0].get('is_table', False):
+                        # Get table data
+                        table_data = paragraph['lines'][0].get('table_data', [])
+                        
+                        # Get table position
+                        first_line = paragraph['lines'][0]
+                        last_line = paragraph['lines'][-1]
+                        
+                        x0 = first_line['words'][0]['x0']
+                        y0 = first_line['y_pos']
+                        x1 = last_line['words'][-1]['x0'] + last_line['words'][-1]['width']
+                        y1 = last_line['y_pos'] + last_line['words'][-1]['height']
+                        
+                        # Get font and color
+                        font = get_font_name(first_line['words'][0].get('fontname', 'Helvetica'))
+                        fontsize = float(first_line['words'][0].get('size', 11))
+                        
+                        # Get color
+                        bbox = fitz.Rect(x0, y0, x1, y1)
+                        color = get_text_color(mupdf_page, bbox)
+                        if color:
+                            r, g, b = normalize_color(color)
+                            fill_color = Color(r, g, b)
+                        else:
+                            fill_color = Color(0, 0, 0)  # Default to black
+                            
+                        # Create table
+                        create_table(c, table_data, x0, page_height - y1, x1 - x0, y1 - y0, 
+                                    font, fontsize, fill_color)
+                                    
+                        # Update current paragraph
+                        current_paragraph += 1
+                        continue
+                        
+                    # Check if this is a list
+                    is_list = False
+                    list_type = None
+                    for list_obj in page_lists:
+                        if paragraph['lines'][0] in [page_lines[item['line_index']] for item in list_obj['items']]:
+                            is_list = True
+                            list_type = list_obj['type']
+                            break
+                            
+                    # Process each line in the paragraph
+                    for line in paragraph['lines']:
                         if current_paragraph >= len(proofread_paragraphs):
                             break
+                            
+                        # Save canvas state
+                        c.saveState()
                         
-                        try:
-                            # Process each line in the paragraph
-                            for line in paragraph.get('lines', []):
-                                if not isinstance(line, dict):
-                                    continue
-                                    
-                                if current_paragraph >= len(proofread_paragraphs):
-                                    break
-                                
-                                # Save canvas state
-                                c.saveState()
-                                
-                                try:
-                                    # Get line properties from bbox
-                                    bbox = line.get('bbox', [0, 0, 0, 0])
-                                    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
-                                        logger.warning(f"Invalid bbox format: {bbox}")
-                                        continue
-                                        
-                                    x_pos = float(bbox[0])
-                                    y_pos = float(bbox[1])
-                                    
-                                    # Get the first span's properties
-                                    spans = line.get('spans', [])
-                                    if not spans or not isinstance(spans[0], dict):
-                                        continue
-                                        
-                                    first_span = spans[0]
-                                    
-                                    # Get font and size with defaults
-                                    font_info = first_span.get('font_info', {})
-                                    font = get_font_name(font_info.get('font', 'Helvetica'))
-                                    fontsize = float(font_info.get('size', 11))
-                                    
-                                    # Get color with default black
-                                    color = get_text_color(mupdf_page, bbox)
-                                    if color:
-                                        r, g, b = normalize_color(color)
-                                        fill_color = Color(r, g, b)
-                                    else:
-                                        fill_color = Color(0, 0, 0)  # Default to black
-                                    
-                                    # Calculate text metrics
-                                    c.setFont(font, fontsize)
-                                    text_width = c.stringWidth(proofread_paragraphs[current_paragraph], font, fontsize)
-                                    text_height = fontsize * 1.2
-                                    
-                                    # Calculate position
-                                    baseline_offset = fontsize * 0.2
-                                    y_pos_adjusted = page_height - y_pos - text_height/2 + baseline_offset
-                                    
-                                    # Get alignment with default left
-                                    alignment = paragraph.get('alignment', {}).get('type', 'left')
-                                    
-                                    # Adjust position based on alignment
-                                    if alignment == 'center':
-                                        x_pos = (page_width - text_width) / 2
-                                    elif alignment == 'right':
-                                        x_pos = page_width - text_width - 50
-                                    elif alignment == 'justified':
-                                        # Simple justification
-                                        pass
-                                    
-                                    # Draw text
-                                    text_object = c.beginText(x_pos, y_pos_adjusted)
-                                    text_object.setFont(font, fontsize)
-                                    text_object.setFillColor(fill_color)
-                                    text_object.textLine(proofread_paragraphs[current_paragraph])
-                                    c.drawText(text_object)
-                                    current_paragraph += 1
-                                    
-                                finally:
-                                    # Restore canvas state
-                                    c.restoreState()
-                                    
-                        except Exception as para_error:
-                            logger.error(f"Error processing paragraph: {str(para_error)}")
-                            continue
-                    
-                    # Move to next page
-                    c.showPage()
-                    
-                except Exception as page_error:
-                    logger.error(f"Error processing page {page_num}: {str(page_error)}")
-                    c.showPage()  # Still move to next page even if there's an error
-                    continue
+                        # Get line properties
+                        y_pos = line['y_pos']
+                        
+                        # Process each word in the line
+                        x_pos = line['words'][0]['x0']  # Start with the first word's x position
+                        
+                        # Get the first word's properties for the line
+                        first_word = line['words'][0]
+                        font = get_font_name(first_word.get('fontname', 'Helvetica'))
+                        fontsize = float(first_word.get('size', 11))
+                        
+                        # Get color from original PDF
+                        bbox = fitz.Rect(first_word['x0'], first_word['top'], 
+                                        first_word['x0'] + first_word['width'], 
+                                        first_word['top'] + first_word['height'])
+                        color = get_text_color(mupdf_page, bbox)
+                        if color:
+                            r, g, b = normalize_color(color)
+                            fill_color = Color(r, g, b)
+                        else:
+                            fill_color = Color(0, 0, 0)  # Default to black
+                        
+                        # Calculate text metrics for better positioning
+                        c.setFont(font, fontsize)
+                        text_width = c.stringWidth(proofread_paragraphs[current_paragraph], font, fontsize)
+                        text_height = fontsize * 1.2  # Approximate height
+                        
+                        # Calculate baseline position for better text alignment
+                        baseline_offset = fontsize * 0.2  # Approximate baseline offset
+                        
+                        # Calculate leading (line spacing) based on font size
+                        leading = fontsize * 1.5  # Standard leading is 1.5x font size
+                        
+                        # Adjust position for better alignment
+                        y_pos_adjusted = page_height - y_pos - text_height/2 + baseline_offset
+                        
+                        # Handle lists
+                        if is_list:
+                            # Add bullet or number
+                            if list_type == 'bullet':
+                                bullet = '•'
+                                bullet_width = c.stringWidth(bullet, font, fontsize)
+                                c.setFillColor(fill_color)
+                                c.drawString(x_pos - bullet_width - 10, y_pos_adjusted, bullet)
+                                x_pos += 10  # Indent the text
+                            elif list_type == 'numbered':
+                                # Find the list item number
+                                for list_obj in page_lists:
+                                    for i, item in enumerate(list_obj['items']):
+                                        if line == page_lines[item['line_index']]:
+                                            number = f"{i+1}."
+                                            number_width = c.stringWidth(number, font, fontsize)
+                                            c.setFillColor(fill_color)
+                                            c.drawString(x_pos - number_width - 10, y_pos_adjusted, number)
+                                            x_pos += 10  # Indent the text
+                                            break
+                        
+                        # Draw text with improved positioning
+                        text_object = c.beginText(x_pos, y_pos_adjusted)
+                        text_object.setFont(font, fontsize)
+                        text_object.setFillColor(fill_color)
+                        text_object.textLine(proofread_paragraphs[current_paragraph])
+                        c.drawText(text_object)
+                        current_paragraph += 1
+                        
+                        # Restore canvas state
+                        c.restoreState()
+                
+                # Add headers and footers
+                for header in header_footer_info['headers']:
+                    if header['page'] == page_num:
+                        c.setFont('Helvetica', 10)
+                        c.setFillColor(Color(0.5, 0.5, 0.5))  # Gray color for headers
+                        c.drawString(50, page_height - 30, header['text'])
+                        
+                for footer in header_footer_info['footers']:
+                    if footer['page'] == page_num:
+                        c.setFont('Helvetica', 10)
+                        c.setFillColor(Color(0.5, 0.5, 0.5))  # Gray color for footers
+                        c.drawString(50, 30, footer['text'])
+                
+                # Move to next page
+                c.showPage()
             
             # Save the PDF
             c.save()
@@ -996,333 +966,44 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
-        raise
-
-def detect_single_line_alignment(line, page_width=None):
-    """
-    Detect alignment for a single line.
-    
-    Args:
-        line: A line dictionary containing text and position information
-        page_width: Optional page width override
-    """
-    try:
-        if not isinstance(line, dict):
-            return 'left'
-            
-        line_width = line.get('width', 0)
-        line_left = line.get('x', 0)
-        if page_width is None:
-            page_width = line.get('page_width', 0)
-        line_right = page_width - (line_left + line_width)
-        
-        # Check for center alignment
-        if abs(line_left - line_right) < 2:
-            return 'center'
-        
-        # Check for right alignment
-        if line_right < line_left * 0.7:
-            return 'right'
-        
-        # Default to left alignment
-        return 'left'
-    except Exception as e:
-        logger.warning(f"Error detecting single line alignment: {str(e)}")
-        return 'left'
-
-def detect_alignment(lines, page_width):
-    """Detect text alignment based on line positions and widths."""
-    if not lines or not isinstance(lines, list):
-        return {
-            "type": "left",
-            "confidence": 0.5,
-            "scores": {"left": 0.5, "right": 0.0, "center": 0.0, "justified": 0.0},
-            "indented": False,
-            "mixed": False
-        }
-    
-    # Extract line information
-    line_info = []
-    for line in lines:
-        if isinstance(line, dict):
-            bbox = line.get("bbox", [0, 0, 0, 0])
-            text = line.get("text", "").strip()
-            if text and len(bbox) == 4:
-                left_margin = bbox[0]
-                right_margin = page_width - bbox[2]
-                width = bbox[2] - bbox[0]
-                
-                # Enhanced text analysis for justified detection
-                words = text.split()
-                word_count = len(words)
-                space_count = text.count(" ")
-                avg_word_length = sum(len(word) for word in words) / word_count if word_count > 0 else 0
-                
-                # Calculate space distribution
-                spaces = [len(space) for space in text.split(" ") if space]
-                space_variance = statistics.variance(spaces) if len(spaces) > 1 else 0
-                
-                line_info.append({
-                    "text": text,
-                    "left_margin": left_margin,
-                    "right_margin": right_margin,
-                    "width": width,
-                    "word_count": word_count,
-                    "space_count": space_count,
-                    "avg_word_length": avg_word_length,
-                    "space_variance": space_variance,
-                    "avg_space_per_word": space_count / word_count if word_count > 0 else 0
-                })
-    
-    if not line_info:
-        return {
-            "type": "left",
-            "confidence": 0.5,
-            "scores": {"left": 0.5, "right": 0.0, "center": 0.0, "justified": 0.0},
-            "indented": False,
-            "mixed": False
-        }
-    
-    # Calculate statistics with improved precision
-    avg_left_margin = sum(l["left_margin"] for l in line_info) / len(line_info)
-    avg_right_margin = sum(l["right_margin"] for l in line_info) / len(line_info)
-    avg_width = sum(l["width"] for l in line_info) / len(line_info)
-    
-    # Enhanced variance calculations
-    left_margin_var = statistics.variance([l["left_margin"] for l in line_info]) if len(line_info) > 1 else 0
-    right_margin_var = statistics.variance([l["right_margin"] for l in line_info]) if len(line_info) > 1 else 0
-    width_var = statistics.variance([l["width"] for l in line_info]) if len(line_info) > 1 else 0
-    
-    # Calculate margin ratios with improved precision
-    left_ratio = avg_left_margin / page_width
-    right_ratio = avg_right_margin / page_width
-    
-    # Enhanced heading detection
-    is_heading = False
-    if len(line_info) <= 2:
-        text = line_info[0]["text"]
-        # More comprehensive heading patterns
-        heading_patterns = [
-            r'^[A-Z][a-z]*\s+\d',  # Chapter 1, Section 2
-            r'^(Chapter|Section|Part|Title)\s+\d',  # Common heading prefixes
-            r'^[A-Z][A-Za-z\s]+$',  # All caps or title case
-            r'^[A-Z][a-z]+\s+[A-Z][a-z]+'  # Title Case Words
-        ]
-        if any(re.match(pattern, text) for pattern in heading_patterns):
-            is_heading = True
-    
-    # Special handling for short text with improved thresholds
-    if len(line_info) <= 2:
-        margin_diff = abs(left_ratio - right_ratio)
-        
-        # Enhanced center alignment detection
-        if margin_diff < 0.03:  # More precise threshold
-            return {
-                "type": "center",
-                "confidence": 0.95,
-                "scores": {"left": 0.2, "right": 0.2, "center": 0.95, "justified": 0.0},
-                "indented": False,
-                "mixed": False
-            }
-        
-        # Enhanced right alignment detection
-        if right_ratio < 0.08 and left_ratio > right_ratio * 2.5:
-            return {
-                "type": "right",
-                "confidence": 0.95,
-                "scores": {"left": 0.2, "right": 0.95, "center": 0.2, "justified": 0.0},
-                "indented": False,
-                "mixed": False
-            }
-        
-        # Enhanced left alignment detection
-        if left_ratio < 0.08 and right_ratio > left_ratio * 2.5:
-            return {
-                "type": "left",
-                "confidence": 0.95,
-                "scores": {"left": 0.95, "right": 0.2, "center": 0.2, "justified": 0.0},
-                "indented": False,
-                "mixed": False
-            }
-    
-    # Enhanced justified text detection
-    width_consistency = 1.0 - min(width_var / (avg_width * 0.05), 1.0)
-    space_consistency = 1.0 - min(statistics.mean([l["space_variance"] for l in line_info]) * 5, 1.0)
-    margin_consistency = 1.0 - max(left_margin_var, right_margin_var) / (page_width * 0.05)
-    
-    # Calculate word length consistency with improved precision
-    word_lengths = [l["avg_word_length"] for l in line_info]
-    word_length_var = statistics.variance(word_lengths) if len(word_lengths) > 1 else 0
-    word_length_consistency = 1.0 - min(word_length_var * 0.3, 1.0)
-    
-    # Enhanced justified score calculation
-    justified_score = (
-        width_consistency * 0.35 +
-        space_consistency * 0.35 +
-        margin_consistency * 0.15 +
-        word_length_consistency * 0.15
-    ) * (1.0 + min(len(line_info) / 8.0, 0.6))  # Adjusted boost factor
-    
-    # Early return for high-confidence justified text
-    if justified_score > 0.75 and len(line_info) > 2 and not is_heading:
-        return {
-            "type": "justified",
-            "confidence": justified_score,
-            "scores": {
-                "left": 0.1,
-                "right": 0.1,
-                "center": 0.1,
-                "justified": justified_score
-            },
-            "indented": False,
-            "mixed": False
-        }
-    
-    # Enhanced alignment score calculations
-    left_score = 1.0 - min(left_margin_var / (page_width * 0.05), 1.0)
-    right_score = 1.0 - min(right_margin_var / (page_width * 0.05), 1.0)
-    center_score = 1.0 - min(abs(avg_left_margin - avg_right_margin) / (page_width * 0.05), 1.0)
-    
-    # Context-based score adjustments
-    if justified_score > 0.4:
-        left_score *= 0.6
-        right_score *= 0.6
-        center_score *= 0.6
-    
-    # Enhanced right alignment detection
-    if right_ratio < left_ratio * 0.65 and right_margin_var < left_margin_var * 0.8:
-        right_score = max(right_score, 0.95)
-    
-    # Enhanced heading handling
-    if is_heading:
-        center_score = max(center_score, 0.95)
-        left_score *= 0.6
-        right_score *= 0.6
-        justified_score = 0.0
-    
-    # Normalize scores with improved precision
-    scores = {
-        "left": max(0.0, min(1.0, left_score)),
-        "right": max(0.0, min(1.0, right_score)),
-        "center": max(0.0, min(1.0, center_score)),
-        "justified": max(0.0, min(1.0, justified_score))
-    }
-    
-    # Determine alignment type with improved confidence
-    alignment_type = max(scores.items(), key=lambda x: x[1])[0]
-    confidence = scores[alignment_type]
-    
-    # Enhanced indentation detection
-    first_line = line_info[0]
-    other_lines = line_info[1:] if len(line_info) > 1 else []
-    is_indented = False
-    
-    if other_lines:
-        other_left_margin = sum(l["left_margin"] for l in other_lines) / len(other_lines)
-        indent_diff = first_line["left_margin"] - other_left_margin
-        is_indented = abs(indent_diff) > page_width * 0.03  # More precise threshold
-    
-    # Enhanced mixed alignment detection
-    is_mixed = False
-    if len(line_info) > 1:
-        alignment_types = set()
-        for i in range(len(line_info) - 1):
-            curr_line = line_info[i]
-            next_line = line_info[i + 1]
-            if abs(curr_line["left_margin"] - next_line["left_margin"]) > page_width * 0.03:
-                is_mixed = True
-                break
-    
-    return {
-        "type": alignment_type,
-        "confidence": confidence,
-        "scores": scores,
-        "indented": is_indented,
-        "mixed": is_mixed
-    }
+        raise e
 
 @app.route('/convert', methods=['POST'])
 def convert_and_proofread():
-    """Endpoint to convert and proofread a PDF file."""
+    """Handles PDF proofreading."""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    filename = secure_filename(file.filename)
+    pdf_path = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(pdf_path)
+
     try:
-        # Check if file was uploaded
-        if 'file' not in request.files:
-            return jsonify({'error': 'No file uploaded'}), 400
-            
-        file = request.files['file']
-        if not file or not file.filename:
-            return jsonify({'error': 'Invalid file'}), 400
+        # Extract text directly from PDF
+        extracted_text = extract_text_from_pdf(pdf_path)
 
-        # Validate file type
-        if not file.content_type == 'application/pdf':
-            return jsonify({'error': 'Only PDF files are allowed'}), 400
-
-        # Ensure upload directories exist
-        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
-        # Save uploaded file
-        try:
-            filename = secure_filename(file.filename)
-            upload_path = os.path.join(UPLOAD_FOLDER, filename)
-            file.save(upload_path)
-            
-            if not os.path.exists(upload_path):
-                raise IOError("Failed to save uploaded file")
-                
-        except Exception as save_error:
-            logger.error(f"Error saving uploaded file: {str(save_error)}")
-            return jsonify({'error': f'Upload error: {str(save_error)}'}), 400
-
-        # Extract text from PDF
-        try:
-            original_text = extract_text_from_pdf(upload_path)
-            if not isinstance(original_text, str):
-                raise TypeError(f"Expected string output from PDF extraction, got {type(original_text)}")
-            if not original_text.strip():
-                raise ValueError("No text content found in PDF")
-        except Exception as extract_error:
-            logger.error(f"Error extracting text: {str(extract_error)}")
-            return jsonify({'error': f'Extraction error: {str(extract_error)}'}), 400
-
-        # Create proofread filename and path
-        proofread_filename = f"proofread_{filename}"
-        proofread_path = os.path.join(OUTPUT_FOLDER, proofread_filename)
+        # Proofread the text
+        proofread_text_content, grammar_errors = proofread_text(extracted_text)
 
         # Save proofread text back to PDF
-        try:
-            save_text_to_pdf(original_text, proofread_path, upload_path)
-            if not os.path.exists(proofread_path):
-                raise IOError("Failed to create proofread PDF")
-        except Exception as save_error:
-            logger.error(f"Error saving proofread PDF: {str(save_error)}")
-            return jsonify({'error': f'Conversion error: {str(save_error)}'}), 400
+        proofread_pdf_filename = "proofread_" + filename
+        proofread_pdf_path = os.path.join(OUTPUT_FOLDER, proofread_pdf_filename)
+        save_text_to_pdf(proofread_text_content, proofread_pdf_path, pdf_path)
 
-        # Prepare response with validated data
-        try:
-            download_url = f"/download/{proofread_filename}"
-            response_data = {
-                'original_text': original_text,
-                'proofread_text': original_text,  # Currently using original text
-                'download_url': download_url
-            }
-            return jsonify(response_data), 200
-            
-        except Exception as response_error:
-            logger.error(f"Error preparing response: {str(response_error)}")
-            return jsonify({'error': f'Response error: {str(response_error)}'}), 500
+        return jsonify({
+            "original_text": extracted_text,
+            "proofread_text": proofread_text_content,
+            "grammar_errors": grammar_errors,  # Provide detailed grammar corrections
+            "download_url": "/download/" + proofread_pdf_filename
+        })
 
     except Exception as e:
-        logger.error(f"Unexpected server error: {str(e)}")
-        return jsonify({'error': f'Server error: {str(e)}'}), 500
-        
-    finally:
-        # Cleanup uploaded files
-        try:
-            if 'upload_path' in locals() and os.path.exists(upload_path):
-                os.remove(upload_path)
-        except Exception as cleanup_error:
-            logger.warning(f"Error during cleanup: {str(cleanup_error)}")
+        logger.error(f"Conversion error: {str(e)}")
+        return jsonify({"error": f"Conversion error: {str(e)}"}), 500
 
 @app.route('/download/<filename>')
 def download_file(filename):
@@ -1334,3 +1015,4 @@ def download_file(filename):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
+    
