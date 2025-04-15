@@ -8,3 +8,4 @@ reportlab
 pdfplumber
 logging
 numpy
+statistics
