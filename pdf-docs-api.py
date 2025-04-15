@@ -18,7 +18,6 @@ import re
 import json
 import numpy as np
 from collections import defaultdict
-import statistics
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -321,74 +320,58 @@ def detect_lists(lines):
         logger.warning(f"Error detecting lists: {str(e)}")
         return []
 
-def detect_paragraphs(formatted_text):
+def detect_paragraphs(lines):
     """
-    Groups text blocks into paragraphs based on their position and formatting.
-    Returns a list of paragraph objects with text and formatting information.
+    Detects paragraphs in a list of lines based on spacing and formatting.
+    Returns a list of paragraph objects.
     """
-    paragraphs = []
-    current_paragraph = None
-    
-    for block in formatted_text:
-        block_info = block.get('block_info', {})
-        lines = block.get('lines', [])
-        alignment = block.get('alignment', {})
+    try:
+        paragraphs = []
+        current_paragraph = []
         
-        # Skip empty blocks
-        if not lines:
-            continue
-        
-        # Start a new paragraph if:
-        # 1. No current paragraph
-        # 2. Different alignment
-        # 3. Significant vertical gap
-        # 4. First line is indented but current paragraph's last line isn't
-        if current_paragraph is None:
-            current_paragraph = {
-                'text': block['text'],
-                'lines': lines,
-                'alignment': alignment,
-                'block_info': block_info
-            }
-        else:
-            prev_block_info = current_paragraph.get('block_info', {})
-            vertical_gap = block_info.get('y0', 0) - prev_block_info.get('y1', 0)
-            
+        for i, line in enumerate(lines):
             # Check if this is a new paragraph
-            if (vertical_gap > 20 or  # Significant vertical gap
-                alignment['type'] != current_paragraph['alignment']['type'] or  # Different alignment
-                (alignment.get('indented', False) and not current_paragraph['alignment'].get('indented', False))):  # Indentation change
+            is_new_paragraph = False
+            
+            # Check for empty line (double line break)
+            if i > 0 and line['y_pos'] - lines[i-1]['y_pos'] > lines[i-1]['words'][0]['height'] * 2:
+                is_new_paragraph = True
                 
-                # Save current paragraph
-                paragraphs.append(current_paragraph)
+            # Check for indentation
+            if i > 0 and line['words'][0]['x0'] > lines[i-1]['words'][0]['x0'] + 20:
+                is_new_paragraph = True
                 
-                # Start new paragraph
-                current_paragraph = {
-                    'text': block['text'],
-                    'lines': lines,
-                    'alignment': alignment,
-                    'block_info': block_info
-                }
-            else:
-                # Append to current paragraph
-                current_paragraph['text'] += '\n' + block['text']
-                current_paragraph['lines'].extend(lines)
+            # Check for different formatting (font, size, color)
+            if i > 0 and len(current_paragraph) > 0:
+                prev_word = current_paragraph[-1]['words'][0]
+                curr_word = line['words'][0]
                 
-                # Update block info to span both blocks
-                current_paragraph['block_info'] = {
-                    'x0': min(prev_block_info.get('x0', float('inf')), block_info.get('x0', float('inf'))),
-                    'x1': max(prev_block_info.get('x1', 0), block_info.get('x1', 0)),
-                    'y0': prev_block_info.get('y0', 0),
-                    'y1': block_info.get('y1', 0),
-                    'width': max(prev_block_info.get('width', 0), block_info.get('width', 0)),
-                    'page_width': block_info.get('page_width', 0)
-                }
-    
-    # Add the last paragraph
-    if current_paragraph:
-        paragraphs.append(current_paragraph)
-    
-    return paragraphs
+                if (prev_word.get('fontname') != curr_word.get('fontname') or
+                    abs(prev_word.get('size', 0) - curr_word.get('size', 0)) > 2):
+                    is_new_paragraph = True
+                    
+            # If this is a new paragraph, save the current one and start a new one
+            if is_new_paragraph and current_paragraph:
+                paragraphs.append({
+                    'lines': current_paragraph,
+                    'text': ' '.join([l['text'] for l in current_paragraph])
+                })
+                current_paragraph = []
+                
+            # Add this line to the current paragraph
+            current_paragraph.append(line)
+            
+        # Add the last paragraph
+        if current_paragraph:
+            paragraphs.append({
+                'lines': current_paragraph,
+                'text': ' '.join([l['text'] for l in current_paragraph])
+            })
+            
+        return paragraphs
+    except Exception as e:
+        logger.warning(f"Error detecting paragraphs: {str(e)}")
+        return [{'lines': lines, 'text': ' '.join([l['text'] for l in lines])}]
 
 def get_text_color(page, bbox):
     """Extracts the color of text at a specific position with advanced precision."""
@@ -666,61 +649,118 @@ def create_table(c, table_data, x, y, width, height, font, fontsize, fill_color)
         logger.warning(f"Error creating table: {str(e)}")
 
 def extract_text_with_formatting(pdf_path):
-    """Extract text with formatting information from a PDF file."""
-    doc = fitz.open(pdf_path)
-    formatted_text = []
-    
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        page_width = page.rect.width
-        blocks = page.get_text("dict")["blocks"]
+    """
+    Extracts text with detailed formatting information using pdfplumber.
+    Returns a list of dictionaries with text and formatting details.
+    """
+    try:
+        result = []
         
-        for block in blocks:
-            if block.get("type") == 0:  # text block
-                lines = []
-                text_lines = []
+        # Detect headers and footers
+        header_footer_info = detect_headers_footers(pdf_path)
+        
+        with pdfplumber.open(pdf_path) as pdf:
+            for page_num, page in enumerate(pdf.pages):
+                # Detect tables
+                tables = detect_tables(page)
                 
-                for line in block.get("lines", []):
-                    line_text = ""
-                    line_spans = []
-                    
-                    for span in line.get("spans", []):
-                        span_text = span.get("text", "").strip()
-                        if span_text:
-                            font_info = {
-                                "size": span.get("size", 0),
-                                "font": span.get("font", ""),
-                                "color": span.get("color", 0)
-                            }
-                            line_spans.append({
-                                "text": span_text,
-                                "font_info": font_info,
-                                "bbox": span.get("bbox", [0, 0, 0, 0])
-                            })
-                            line_text += span_text + " "
-                    
-                    if line_text.strip():
-                        text_lines.append(line_text.strip())
-                        lines.append({
-                            "text": line_text.strip(),
-                            "spans": line_spans,
-                            "bbox": line.get("bbox", [0, 0, 0, 0])
-                        })
+                # Detect columns
+                columns = detect_columns(page)
                 
-                if lines:
-                    block_text = "\n".join(text_lines)
-                    formatted_text.append({
-                        "text": block_text,
-                        "lines": lines,
-                        "block_info": {
-                            "page_num": page_num,
-                            "page_width": page_width,
-                            "bbox": block.get("bbox", [0, 0, 0, 0])
-                        }
-                    })
-    
-    doc.close()
-    return formatted_text
+                # Extract text with detailed formatting
+                words = page.extract_words(
+                    keep_blank_chars=True,
+                    x_tolerance=3,
+                    y_tolerance=3,
+                    extra_attrs=['fontname', 'size', 'upright']
+                )
+                
+                # Group words into lines based on y-position
+                lines = {}
+                for word in words:
+                    y_pos = round(word['top'], 1)  # Round to 1 decimal place for grouping
+                    if y_pos not in lines:
+                        lines[y_pos] = []
+                    lines[y_pos].append(word)
+                
+                # Sort lines by y-position (top to bottom)
+                sorted_lines = sorted(lines.items(), key=lambda x: x[0])
+                
+                # Process each line
+                for y_pos, line_words in sorted_lines:
+                    # Sort words in line by x-position (left to right)
+                    line_words.sort(key=lambda x: x['x0'])
+                    
+                    # Create a line object with formatting
+                    line_obj = {
+                        'text': ' '.join([w['text'] for w in line_words]),
+                        'words': line_words,
+                        'y_pos': y_pos,
+                        'page': page_num,
+                        'is_table': False,
+                        'is_column': False,
+                        'is_header': False,
+                        'is_footer': False
+                    }
+                    
+                    # Check if this line is part of a table
+                    for table in tables:
+                        if (table['bbox'][1] <= y_pos <= table['bbox'][3] and
+                            table['bbox'][0] <= line_words[0]['x0'] <= table['bbox'][2]):
+                            line_obj['is_table'] = True
+                            line_obj['table_data'] = table['data']
+                            break
+                            
+                    # Check if this line is part of a column
+                    for column in columns:
+                        if (column['y0'] <= y_pos <= column['y1'] and
+                            column['x0'] <= line_words[0]['x0'] <= column['x1']):
+                            line_obj['is_column'] = True
+                            line_obj['column'] = column
+                            break
+                            
+                    # Check if this line is a header
+                    for header in header_footer_info['headers']:
+                        if (header['region'][1] <= y_pos <= header['region'][3] and
+                            header['region'][0] <= line_words[0]['x0'] <= header['region'][2]):
+                            line_obj['is_header'] = True
+                            break
+                            
+                    # Check if this line is a footer
+                    for footer in header_footer_info['footers']:
+                        if (footer['region'][1] <= y_pos <= footer['region'][3] and
+                            footer['region'][0] <= line_words[0]['x0'] <= footer['region'][2]):
+                            line_obj['is_footer'] = True
+                            break
+                            
+                    result.append(line_obj)
+        
+        # Detect paragraphs
+        paragraphs = detect_paragraphs(result)
+        
+        # Detect lists
+        lists = detect_lists(result)
+        
+        # Add paragraph and list information to the result
+        for line in result:
+            # Find which paragraph this line belongs to
+            for i, paragraph in enumerate(paragraphs):
+                if line in paragraph['lines']:
+                    line['paragraph_index'] = i
+                    break
+                    
+            # Find which list this line belongs to
+            for i, list_obj in enumerate(lists):
+                for item in list_obj['items']:
+                    if line['line_index'] == item['line_index']:
+                        line['list_index'] = i
+                        line['list_type'] = list_obj['type']
+                        break
+                        
+        return result
+    except Exception as e:
+        logger.error(f"Error extracting text with formatting: {str(e)}")
+        raise
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
@@ -892,27 +932,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                                             x_pos += 10  # Indent the text
                                             break
                         
-                        # Apply alignment based on paragraph alignment information
-                        alignment = paragraph.get('alignment', {'type': 'left', 'confidence': 1.0})
-                        alignment_type = alignment.get('type', 'left')
-                        
-                        # Adjust x_pos based on alignment
-                        if alignment_type == 'center':
-                            # Center the text
-                            x_pos = (page_width - text_width) / 2
-                        elif alignment_type == 'right':
-                            # Right align the text
-                            x_pos = page_width - text_width - 50  # 50 points margin
-                        elif alignment_type == 'justified':
-                            # For justified text, we need to adjust the spacing between words
-                            # This is a simplified approach - for full justification, we'd need to
-                            # split the text into words and adjust spacing
-                            pass
-                        
-                        # Handle indentation
-                        if alignment.get('indented', False):
-                            x_pos += 20  # Add indentation
-                        
                         # Draw text with improved positioning
                         text_object = c.beginText(x_pos, y_pos_adjusted)
                         text_object.setFont(font, fontsize)
@@ -949,242 +968,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
 
-def detect_single_line_alignment(line, page_width=None):
-    """
-    Detect alignment for a single line.
-    
-    Args:
-        line: A line dictionary containing text and position information
-        page_width: Optional page width override
-    """
-    try:
-        if not isinstance(line, dict):
-            return 'left'
-            
-        line_width = line.get('width', 0)
-        line_left = line.get('x', 0)
-        if page_width is None:
-            page_width = line.get('page_width', 0)
-        line_right = page_width - (line_left + line_width)
-        
-        # Check for center alignment
-        if abs(line_left - line_right) < 2:
-            return 'center'
-        
-        # Check for right alignment
-        if line_right < line_left * 0.7:
-            return 'right'
-        
-        # Default to left alignment
-        return 'left'
-    except Exception as e:
-        logger.warning(f"Error detecting single line alignment: {str(e)}")
-        return 'left'
-
-def detect_alignment(lines, page_width):
-    """Detect text alignment based on line positions and widths."""
-    if not lines or not isinstance(lines, list):
-        return {
-            "type": "left",
-            "confidence": 0.5,
-            "scores": {"left": 0.5, "right": 0.0, "center": 0.0, "justified": 0.0},
-            "indented": False,
-            "mixed": False
-        }
-    
-    # Extract line information
-    line_info = []
-    for line in lines:
-        if isinstance(line, dict):
-            bbox = line.get("bbox", [0, 0, 0, 0])
-            text = line.get("text", "").strip()
-            if text and len(bbox) == 4:
-                left_margin = bbox[0]
-                right_margin = page_width - bbox[2]
-                width = bbox[2] - bbox[0]
-                
-                # Count spaces in text for justified detection
-                space_count = text.count(" ")
-                word_count = len(text.split())
-                
-                line_info.append({
-                    "text": text,
-                    "left_margin": left_margin,
-                    "right_margin": right_margin,
-                    "width": width,
-                    "space_count": space_count,
-                    "word_count": word_count,
-                    "avg_space_per_word": space_count / word_count if word_count > 0 else 0
-                })
-    
-    if not line_info:
-        return {
-            "type": "left",
-            "confidence": 0.5,
-            "scores": {"left": 0.5, "right": 0.0, "center": 0.0, "justified": 0.0},
-            "indented": False,
-            "mixed": False
-        }
-    
-    # Calculate statistics
-    avg_left_margin = sum(l["left_margin"] for l in line_info) / len(line_info)
-    avg_right_margin = sum(l["right_margin"] for l in line_info) / len(line_info)
-    avg_width = sum(l["width"] for l in line_info) / len(line_info)
-    
-    left_margin_var = sum((l["left_margin"] - avg_left_margin) ** 2 for l in line_info) / len(line_info)
-    right_margin_var = sum((l["right_margin"] - avg_right_margin) ** 2 for l in line_info) / len(line_info)
-    width_var = sum((l["width"] - avg_width) ** 2 for l in line_info) / len(line_info)
-    
-    # Calculate space distribution variance for justified detection
-    avg_space_per_word = sum(l["avg_space_per_word"] for l in line_info) / len(line_info)
-    space_var = sum((l["avg_space_per_word"] - avg_space_per_word) ** 2 for l in line_info) / len(line_info)
-    
-    # Calculate margin ratios
-    left_ratio = avg_left_margin / page_width
-    right_ratio = avg_right_margin / page_width
-    
-    # Check if this is a heading (short text, often centered)
-    is_heading = False
-    if len(line_info) <= 2:  # Consider both single lines and two-line headings
-        text = line_info[0]["text"]
-        # Check if it's a short line with no punctuation at the end
-        if len(text) < 50 and not text.rstrip().endswith(('.', '!', '?', ':', ';')):
-            is_heading = True
-            # Check if it looks like a heading (e.g., "Chapter 1", "Section 2.1", etc.)
-            if re.match(r'^[A-Z][a-z]*\s+\d|^(Chapter|Section|Part|Title)\s+\d', text):
-                is_heading = True
-    
-    # Special handling for short text (1-2 lines)
-    if len(line_info) <= 2:
-        # Check for center-aligned short text first (headings are often centered)
-        if abs(left_ratio - right_ratio) < 0.05:
-            return {
-                "type": "center",
-                "confidence": 0.9,
-                "scores": {"left": 0.3, "right": 0.3, "center": 0.9, "justified": 0.0},
-                "indented": False,
-                "mixed": False
-            }
-        # Check for right-aligned short text
-        elif right_ratio < 0.1 and left_ratio > right_ratio * 2:
-            return {
-                "type": "right",
-                "confidence": 0.9,
-                "scores": {"left": 0.3, "right": 0.9, "center": 0.3, "justified": 0.0},
-                "indented": False,
-                "mixed": False
-            }
-        # Check for left-aligned short text
-        elif left_ratio < 0.1 and right_ratio > left_ratio * 2:
-            return {
-                "type": "left",
-                "confidence": 0.9,
-                "scores": {"left": 0.9, "right": 0.3, "center": 0.3, "justified": 0.0},
-                "indented": False,
-                "mixed": False
-            }
-        # Default to left alignment for other short text
-        else:
-            return {
-                "type": "left",
-                "confidence": 0.7,
-                "scores": {"left": 0.7, "right": 0.3, "center": 0.3, "justified": 0.0},
-                "indented": False,
-                "mixed": False
-            }
-    
-    # Calculate justified score with improved metrics
-    width_consistency = 1.0 - (width_var / (avg_width * 0.1))
-    space_consistency = 1.0 - min(space_var * 10, 1.0)
-    margin_consistency = 1.0 - max(left_margin_var, right_margin_var) / (page_width * 0.1)
-    
-    # Boost justified score for longer paragraphs with consistent width
-    justified_score = (
-        width_consistency * 0.4 +
-        space_consistency * 0.3 +
-        margin_consistency * 0.3
-    ) * (1.0 + min(len(line_info) / 10.0, 0.5))
-    
-    # Early return for high-confidence justified text
-    if justified_score > 0.9 and len(line_info) > 2 and not is_heading:
-        return {
-            "type": "justified",
-            "confidence": justified_score,
-            "scores": {
-                "left": 0.2,
-                "right": 0.2,
-                "center": 0.2,
-                "justified": justified_score
-            },
-            "indented": False,
-            "mixed": False
-        }
-    
-    # Calculate alignment scores
-    left_score = 1.0 - (left_margin_var / (page_width * 0.1))
-    right_score = 1.0 - (right_margin_var / (page_width * 0.1))
-    center_score = 1.0 - abs(avg_left_margin - avg_right_margin) / (page_width * 0.1)
-    
-    # Adjust scores based on context
-    if justified_score > 0.5:
-        left_score *= 0.5
-        right_score *= 0.5
-        center_score *= 0.5
-    
-    # Special handling for right alignment
-    if right_ratio < left_ratio * 0.7 and right_margin_var < left_margin_var:
-        right_score = max(right_score, 0.9)
-    
-    # Special handling for headings
-    if is_heading:
-        # Boost center score for headings
-        center_score = max(center_score, 0.9)
-        # Reduce other scores
-        left_score *= 0.7
-        right_score *= 0.7
-        justified_score = 0.0  # Completely eliminate justified score for headings
-    
-    # Normalize scores
-    scores = {
-        "left": max(0.0, min(1.0, left_score)),
-        "right": max(0.0, min(1.0, right_score)),
-        "center": max(0.0, min(1.0, center_score)),
-        "justified": max(0.0, min(1.0, justified_score))
-    }
-    
-    # Determine alignment type
-    alignment_type = max(scores.items(), key=lambda x: x[1])[0]
-    confidence = scores[alignment_type]
-    
-    # Check for indentation
-    first_line = line_info[0]
-    other_lines = line_info[1:] if len(line_info) > 1 else []
-    is_indented = False
-    
-    if other_lines:
-        other_left_margin = sum(l["left_margin"] for l in other_lines) / len(other_lines)
-        indent_diff = first_line["left_margin"] - other_left_margin
-        is_indented = abs(indent_diff) > page_width * 0.05
-    
-    # Check for mixed alignment
-    is_mixed = False
-    if len(line_info) > 1:
-        alignment_types = set()
-        for i in range(len(line_info) - 1):
-            curr_line = line_info[i]
-            next_line = line_info[i + 1]
-            if abs(curr_line["left_margin"] - next_line["left_margin"]) > page_width * 0.05:
-                is_mixed = True
-                break
-    
-    return {
-        "type": alignment_type,
-        "confidence": confidence,
-        "scores": scores,
-        "indented": is_indented,
-        "mixed": is_mixed
-    }
-
 @app.route('/convert', methods=['POST'])
 def convert_and_proofread():
     """Handles PDF proofreading."""
@@ -1211,34 +994,11 @@ def convert_and_proofread():
         proofread_pdf_path = os.path.join(OUTPUT_FOLDER, proofread_pdf_filename)
         save_text_to_pdf(proofread_text_content, proofread_pdf_path, pdf_path)
 
-        # Extract text with formatting for alignment analysis
-        formatted_text = extract_text_with_formatting(pdf_path)
-        paragraphs = detect_paragraphs(formatted_text)
-        
-        # Collect alignment information
-        alignment_info = {
-            'left': 0,
-            'right': 0,
-            'center': 0,
-            'justified': 0,
-            'indented': 0,
-            'mixed': 0
-        }
-        
-        for paragraph in paragraphs:
-            alignment = paragraph.get('alignment', {'type': 'left', 'indented': False, 'mixed': False})
-            alignment_info[alignment['type']] += 1
-            if alignment.get('indented', False):
-                alignment_info['indented'] += 1
-            if alignment.get('mixed', False):
-                alignment_info['mixed'] += 1
-
         return jsonify({
             "original_text": extracted_text,
             "proofread_text": proofread_text_content,
             "grammar_errors": grammar_errors,  # Provide detailed grammar corrections
-            "download_url": "/download/" + proofread_pdf_filename,
-            "alignment_info": alignment_info
+            "download_url": "/download/" + proofread_pdf_filename
         })
 
     except Exception as e:
