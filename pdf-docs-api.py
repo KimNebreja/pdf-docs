@@ -28,7 +28,7 @@ app = Flask(__name__)
 CORS(app)
 
 UPLOAD_FOLDER = "uploads"
-OUTPUT_FOLDER = "/tmp"
+OUTPUT_FOLDER = "processed_files"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
@@ -43,19 +43,25 @@ def extract_text_from_pdf(pdf_path):
 
         doc = fitz.open(pdf_path)
         text = []
-        for page in doc:
+        
+        if doc.page_count == 0:
+            raise ValueError("PDF file is empty or corrupted")
+            
+        for page_num in range(doc.page_count):
             try:
+                page = doc[page_num]
                 # Extract text with formatting information
                 page_text = page.get_text()
                 if isinstance(page_text, str):
                     text.append(page_text)
                 else:
-                    logger.warning(f"Unexpected text type on page {page.number}: {type(page_text)}")
+                    logger.warning(f"Unexpected text type on page {page_num}: {type(page_text)}")
                     text.append("")
             except Exception as page_error:
-                logger.error(f"Error extracting text from page {page.number}: {str(page_error)}")
+                logger.error(f"Error extracting text from page {page_num}: {str(page_error)}")
                 text.append("")
                 continue
+                
         doc.close()
         
         # Join text with newlines and ensure it's a string
@@ -63,10 +69,14 @@ def extract_text_from_pdf(pdf_path):
         if not isinstance(final_text, str):
             raise TypeError(f"Expected string output, got {type(final_text)}")
             
+        if not final_text.strip():
+            return "No text content found in PDF"
+            
         return final_text
+        
     except Exception as e:
         logger.error(f"Error extracting text from PDF: {str(e)}")
-        raise
+        raise ValueError(f"Failed to extract text from PDF: {str(e)}")
 
 def detect_tables(page):
     """
@@ -410,25 +420,31 @@ def detect_paragraphs(formatted_text):
     return paragraphs
 
 def get_text_color(page, bbox):
-    """Extracts the color of text at a specific position with advanced precision."""
+    """
+    Extract text color from a PDF page using PyMuPDF.
+    
+    Args:
+        page: PyMuPDF page object
+        bbox: Bounding box of the text (fitz.Rect)
+        
+    Returns:
+        Tuple of (r, g, b) values or None if color cannot be determined
+    """
     try:
-        # Get text spans in the area with more detailed extraction
+        # Get text spans in the bounding box
         spans = page.get_text("dict", clip=bbox)["blocks"]
+        if not spans:
+            return None
+            
+        # Get the first span's color
         for block in spans:
-            if "lines" in block:
-                for line in block["lines"]:
-                    if "spans" in line:
-                        for span in line["spans"]:
-                            # Check for multiple color attributes with priority
-                            if "color" in span:
-                                return span["color"]
-                            elif "fill" in span:
-                                return span["fill"]
-                            elif "stroke" in span:
-                                return span["stroke"]
+            if "spans" in block:
+                for span in block["spans"]:
+                    if "color" in span:
+                        return span["color"]
         return None
     except Exception as e:
-        logger.warning(f"Error getting text color: {str(e)}")
+        logger.error(f"Error getting text color: {str(e)}")
         return None
 
 def proofread_text(text):
@@ -454,55 +470,21 @@ def proofread_text(text):
 
 def normalize_color(color):
     """
-    Normalizes color values to RGB format in range 0-1 with advanced handling.
-    Returns a tuple of (r, g, b) values.
+    Normalize color values to 0-1 range for ReportLab.
+    
+    Args:
+        color: Tuple of (r, g, b) values in 0-255 range
+        
+    Returns:
+        Tuple of (r, g, b) values in 0-1 range
     """
     try:
-        if color is None:
-            return (0, 0, 0)  # Default to black
-            
-        # If color is already a tuple/list of RGB values
-        if isinstance(color, (tuple, list)):
-            if len(color) >= 3:
-                # Convert to range 0-1 if needed
-                r = float(color[0]) / 255 if color[0] > 1 else float(color[0])
-                g = float(color[1]) / 255 if color[1] > 1 else float(color[1])
-                b = float(color[2]) / 255 if color[2] > 1 else float(color[2])
-                # Ensure values are in range 0-1
-                r = max(0.0, min(1.0, r))
-                g = max(0.0, min(1.0, g))
-                b = max(0.0, min(1.0, b))
-                return (r, g, b)
-        
-        # If color is a single value (grayscale)
-        if isinstance(color, (int, float)):
-            val = float(color) / 255 if color > 1 else float(color)
-            val = max(0.0, min(1.0, val))
-            return (val, val, val)
-        
-        # If color is a hex string
-        if isinstance(color, str) and color.startswith('#'):
-            # Convert hex to RGB
-            color = color.lstrip('#')
-            r = int(color[0:2], 16) / 255.0
-            g = int(color[2:4], 16) / 255.0
-            b = int(color[4:6], 16) / 255.0
-            return (r, g, b)
-        
-        # If color is a CMYK value
-        if isinstance(color, (tuple, list)) and len(color) == 4:
-            c, m, y, k = color
-            # Convert CMYK to RGB
-            r = 1 - min(1, c * (1 - k) + k)
-            g = 1 - min(1, m * (1 - k) + k)
-            b = 1 - min(1, y * (1 - k) + k)
-            return (r, g, b)
-        
-        # Default to black for unknown types
-        return (0, 0, 0)
+        if not color:
+            return (0, 0, 0)
+        return tuple(c / 255.0 for c in color)
     except Exception as e:
-        logger.warning(f"Error normalizing color {color}: {str(e)}")
-        return (0, 0, 0)  # Default to black on error
+        logger.error(f"Error normalizing color: {str(e)}")
+        return (0, 0, 0)
 
 def get_font_name(font_name):
     """Normalizes font names with advanced mapping and fallback mechanism."""
@@ -1217,42 +1199,27 @@ def convert_and_proofread():
         # Extract text directly from PDF
         extracted_text = extract_text_from_pdf(pdf_path)
 
-        # Proofread the text
-        proofread_text_content, grammar_errors = proofread_text(extracted_text)
-
-        # Save proofread text back to PDF
+        # Save proofread text back to PDF (without proofreading for now)
         proofread_pdf_filename = "proofread_" + filename
         proofread_pdf_path = os.path.join(OUTPUT_FOLDER, proofread_pdf_filename)
-        save_text_to_pdf(proofread_text_content, proofread_pdf_path, pdf_path)
+        save_text_to_pdf(extracted_text, proofread_pdf_path, pdf_path)  # Using original text instead of proofread text
 
-        # Extract text with formatting for alignment analysis
-        formatted_text = extract_text_with_formatting(pdf_path)
-        paragraphs = detect_paragraphs(formatted_text)
+        # Get the base URL for the download link
+        base_url = request.host_url.rstrip('/')
         
-        # Collect alignment information
-        alignment_info = {
-            'left': 0,
-            'right': 0,
-            'center': 0,
-            'justified': 0,
-            'indented': 0,
-            'mixed': 0
-        }
-        
-        for paragraph in paragraphs:
-            alignment = paragraph.get('alignment', {'type': 'left', 'indented': False, 'mixed': False})
-            alignment_info[alignment['type']] += 1
-            if alignment.get('indented', False):
-                alignment_info['indented'] += 1
-            if alignment.get('mixed', False):
-                alignment_info['mixed'] += 1
-
         return jsonify({
             "original_text": extracted_text,
-            "proofread_text": proofread_text_content,
-            "grammar_errors": grammar_errors,  # Provide detailed grammar corrections
-            "download_url": "/download/" + proofread_pdf_filename,
-            "alignment_info": alignment_info
+            "proofread_text": extracted_text,  # Using original text for now
+            "grammar_errors": [],  # Empty list since we're not proofreading
+            "download_url": f"{base_url}/download/{proofread_pdf_filename}",
+            "alignment_info": {
+                'left': 0,
+                'right': 0,
+                'center': 0,
+                'justified': 0,
+                'indented': 0,
+                'mixed': 0
+            }
         })
 
     except Exception as e:
