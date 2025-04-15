@@ -789,12 +789,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             # Detect paragraphs
             paragraphs = detect_paragraphs(formatted_text)
             
-            # Detect lists
-            lists = detect_lists(formatted_text)
-            
-            # Detect headers and footers
-            header_footer_info = detect_headers_footers(original_pdf_path)
-            
             # Split text into paragraphs for proofreading
             if isinstance(text, str):
                 proofread_paragraphs = text.split('\n')
@@ -809,29 +803,11 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 logger.info(f"Processing page {page_num + 1}")
                 
                 try:
-                    # Get lines for this page
-                    page_lines = []
-                    for block in formatted_text:
-                        if block.get('block_info', {}).get('page_num') == page_num:
-                            for line in block.get('lines', []):
-                                if isinstance(line, dict):
-                                    page_lines.append(line)
-                    
                     # Get paragraphs for this page
                     page_paragraphs = []
                     for p in paragraphs:
-                        if p.get('lines') and len(p['lines']) > 0:
-                            first_line = p['lines'][0]
-                            if isinstance(first_line, dict) and first_line.get('page') == page_num:
-                                page_paragraphs.append(p)
-                    
-                    # Get lists for this page
-                    page_lists = []
-                    for lst in lists:
-                        if lst.get('items') and len(lst['items']) > 0:
-                            first_item = lst['items'][0]
-                            if isinstance(first_item, dict) and first_item.get('line_index') < len(page_lines):
-                                page_lists.append(lst)
+                        if p.get('block_info', {}).get('page_num') == page_num:
+                            page_paragraphs.append(p)
                     
                     # Process each paragraph
                     for paragraph in page_paragraphs:
@@ -851,32 +827,29 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                                 c.saveState()
                                 
                                 try:
-                                    # Get line properties
-                                    y_pos = float(line.get('y_pos', 0))
-                                    
-                                    # Get the first word's properties
-                                    words = line.get('words', [])
-                                    if not words:
+                                    # Get line properties from bbox
+                                    bbox = line.get('bbox', [0, 0, 0, 0])
+                                    if len(bbox) != 4:
                                         continue
                                         
-                                    first_word = words[0]
-                                    if not isinstance(first_word, dict):
+                                    x_pos = float(bbox[0])
+                                    y_pos = float(bbox[1])
+                                    
+                                    # Get the first span's properties
+                                    spans = line.get('spans', [])
+                                    if not spans:
+                                        continue
+                                        
+                                    first_span = spans[0]
+                                    if not isinstance(first_span, dict):
                                         continue
                                     
-                                    x_pos = float(first_word.get('x0', 0))
-                                    
                                     # Get font and size
-                                    font = get_font_name(first_word.get('fontname', 'Helvetica'))
-                                    fontsize = float(first_word.get('size', 11))
+                                    font_info = first_span.get('font_info', {})
+                                    font = get_font_name(font_info.get('font', 'Helvetica'))
+                                    fontsize = float(font_info.get('size', 11))
                                     
                                     # Get color
-                                    bbox = fitz.Rect(
-                                        float(first_word.get('x0', 0)),
-                                        float(first_word.get('top', 0)),
-                                        float(first_word.get('x0', 0)) + float(first_word.get('width', 0)),
-                                        float(first_word.get('top', 0)) + float(first_word.get('height', 0))
-                                    )
-                                    
                                     color = get_text_color(mupdf_page, bbox)
                                     if color:
                                         r, g, b = normalize_color(color)
@@ -920,19 +893,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         except Exception as para_error:
                             logger.error(f"Error processing paragraph: {str(para_error)}")
                             continue
-                    
-                    # Add headers and footers
-                    for header in header_footer_info.get('headers', []):
-                        if header.get('page') == page_num:
-                            c.setFont('Helvetica', 10)
-                            c.setFillColor(Color(0.5, 0.5, 0.5))
-                            c.drawString(50, page_height - 30, str(header.get('text', '')))
-                    
-                    for footer in header_footer_info.get('footers', []):
-                        if footer.get('page') == page_num:
-                            c.setFont('Helvetica', 10)
-                            c.setFillColor(Color(0.5, 0.5, 0.5))
-                            c.drawString(50, 30, str(footer.get('text', '')))
                     
                     # Move to next page
                     c.showPage()
