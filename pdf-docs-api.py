@@ -877,7 +877,18 @@ def convert_and_proofread():
         if 'text' in request.form:
             proofread_text_content = request.form['text']
             original_filename = request.form.get('filename', 'document.pdf')
+            
+            # Store the original file path in a session-like dictionary
             original_pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
+            
+            # Ensure the original file exists
+            if not os.path.exists(original_pdf_path):
+                # Try to find the file with "proofread_" prefix removed
+                base_filename = original_filename.replace("proofread_", "", 1)
+                original_pdf_path = os.path.join(UPLOAD_FOLDER, base_filename)
+                
+                if not os.path.exists(original_pdf_path):
+                    return jsonify({"error": "Original file not found"}), 404
             
             # Get selected suggestions
             selected_suggestions = {}
@@ -891,7 +902,7 @@ def convert_and_proofread():
                     logger.warning(f"Failed to parse selected suggestions: {str(e)}")
 
             # Generate PDF with the updated text
-            output_filename = "proofread_" + original_filename
+            output_filename = "proofread_" + original_filename.replace("proofread_", "", 1)  # Avoid duplicate prefix
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
             
             # Use the original PDF as a template for formatting
@@ -908,6 +919,11 @@ def convert_and_proofread():
 
         filename = secure_filename(file.filename)
         pdf_path = os.path.join(UPLOAD_FOLDER, filename)
+        
+        # Create UPLOAD_FOLDER if it doesn't exist
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        
+        # Save the uploaded file
         file.save(pdf_path)
 
         # Extract text from PDF
@@ -919,13 +935,19 @@ def convert_and_proofread():
         # Save proofread text back to PDF
         proofread_pdf_filename = "proofread_" + filename
         proofread_pdf_path = os.path.join(OUTPUT_FOLDER, proofread_pdf_filename)
+        
+        # Create OUTPUT_FOLDER if it doesn't exist
+        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+        
+        # Save the proofread PDF using the original as template
         save_text_to_pdf(proofread_text_content, proofread_pdf_path, pdf_path)
 
         return jsonify({
             "original_text": extracted_text,
             "proofread_text": proofread_text_content,
             "grammar_errors": grammar_errors,
-            "download_url": "/download/" + proofread_pdf_filename
+            "download_url": "/download/" + proofread_pdf_filename,
+            "file_name": filename  # Add filename to response for frontend reference
         })
 
     except Exception as e:
