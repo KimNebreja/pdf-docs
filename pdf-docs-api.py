@@ -978,6 +978,7 @@ def convert_and_proofread():
         # Handle text and suggestions if provided directly
         if 'text' in request.form:
             proofread_text_content = request.form['text']
+            original_filename = request.form.get('filename', 'document.pdf')
             
             # Get selected suggestions
             selected_suggestions = {}
@@ -991,23 +992,38 @@ def convert_and_proofread():
                     logger.warning(f"Failed to parse selected suggestions: {str(e)}")
 
             # Generate PDF with the updated text
-            output_filename = "proofread_output.pdf"
+            output_filename = "proofread_" + original_filename
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
             
-            # Create a simple PDF with the text
-            doc = SimpleDocTemplate(output_path, pagesize=A4)
-            styles = getSampleStyleSheet()
-            story = []
+            # Create PDF with original formatting
+            c = canvas.Canvas(output_path, pagesize=A4)
+            width, height = A4
             
-            # Split text into paragraphs and create PDF content
-            paragraphs = proofread_text_content.split('\n')
-            for para in paragraphs:
-                if para.strip():
-                    story.append(Paragraph(para, styles['Normal']))
-                    story.append(Spacer(1, 12))
+            # Set default font and size
+            c.setFont("Helvetica", 12)
             
-            # Build the PDF
-            doc.build(story)
+            # Split text into lines for proper formatting
+            lines = proofread_text_content.split('\n')
+            y = height - 50  # Start from top with margin
+            
+            for line in lines:
+                if line.strip():
+                    # Handle indentation
+                    x = 50  # Default left margin
+                    if line.startswith('    '):  # Check for indentation
+                        x += 20
+                    
+                    # Draw text with preserved formatting
+                    c.drawString(x, y, line.strip())
+                    y -= 20  # Line spacing
+                    
+                    # Check if we need a new page
+                    if y < 50:  # Bottom margin
+                        c.showPage()
+                        c.setFont("Helvetica", 12)
+                        y = height - 50
+            
+            c.save()
             
             return jsonify({
                 "download_url": "/download/" + output_filename
