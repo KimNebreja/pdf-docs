@@ -971,36 +971,62 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
 @app.route('/convert', methods=['POST'])
 def convert_and_proofread():
     """Handles PDF proofreading."""
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-
-    filename = secure_filename(file.filename)
-    pdf_path = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(pdf_path)
-
     try:
-        # Extract text directly from PDF
+        if 'file' not in request.files and 'text' not in request.form:
+            return jsonify({"error": "No file or text provided"}), 400
+
+        # Handle text and suggestions if provided directly
+        if 'text' in request.form:
+            proofread_text_content = request.form['text']
+            
+            # Get selected suggestions
+            selected_suggestions = {}
+            if 'selected_suggestions' in request.form:
+                try:
+                    selected_suggestions = dict(json.loads(request.form['selected_suggestions']))
+                    # Apply selected suggestions
+                    for original_word, selected_word in selected_suggestions.items():
+                        proofread_text_content = proofread_text_content.replace(original_word, selected_word)
+                except Exception as e:
+                    logger.warning(f"Failed to parse selected suggestions: {str(e)}")
+
+            # Generate PDF with the updated text
+            output_filename = "proofread_output.pdf"
+            output_path = os.path.join(OUTPUT_FOLDER, output_filename)
+            
+            # Create a simple PDF with the text
+            doc = SimpleDocTemplate(output_path, pagesize=A4)
+            styles = getSampleStyleSheet()
+            story = []
+            
+            # Split text into paragraphs and create PDF content
+            paragraphs = proofread_text_content.split('\n')
+            for para in paragraphs:
+                if para.strip():
+                    story.append(Paragraph(para, styles['Normal']))
+                    story.append(Spacer(1, 12))
+            
+            # Build the PDF
+            doc.build(story)
+            
+            return jsonify({
+                "download_url": "/download/" + output_filename
+            })
+
+        # Handle file upload case
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No selected file"}), 400
+
+        filename = secure_filename(file.filename)
+        pdf_path = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(pdf_path)
+
+        # Extract text from PDF
         extracted_text = extract_text_from_pdf(pdf_path)
 
         # Proofread the text
         proofread_text_content, grammar_errors = proofread_text(extracted_text)
-
-        # Get selected suggestions if provided
-        selected_suggestions = {}
-        if 'selected_suggestions' in request.form:
-            try:
-                selected_suggestions = dict(json.loads(request.form['selected_suggestions']))
-            except:
-                logger.warning("Failed to parse selected suggestions")
-
-        # Apply selected suggestions to the proofread text
-        for original_word, selected_word in selected_suggestions.items():
-            # Replace the original word with the selected suggestion
-            proofread_text_content = proofread_text_content.replace(original_word, selected_word)
 
         # Save proofread text back to PDF
         proofread_pdf_filename = "proofread_" + filename
