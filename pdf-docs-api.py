@@ -991,7 +991,7 @@ def convert_and_proofread():
                     logger.warning(f"Failed to parse selected suggestions: {str(e)}")
 
             # Generate PDF with the updated text
-            output_filename = "proofread_output.pdf"
+            output_filename = filename + "proofread"
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
             
             # Create a simple PDF with the text
