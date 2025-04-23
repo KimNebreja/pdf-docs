@@ -979,6 +979,7 @@ def convert_and_proofread():
         if 'text' in request.form:
             proofread_text_content = request.form['text']
             original_filename = request.form.get('filename', 'document.pdf')
+            original_pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
             
             # Get selected suggestions
             selected_suggestions = {}
@@ -995,35 +996,8 @@ def convert_and_proofread():
             output_filename = "proofread_" + original_filename
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
             
-            # Create PDF with original formatting
-            c = canvas.Canvas(output_path, pagesize=A4)
-            width, height = A4
-            
-            # Set default font and size
-            c.setFont("Helvetica", 12)
-            
-            # Split text into lines for proper formatting
-            lines = proofread_text_content.split('\n')
-            y = height - 50  # Start from top with margin
-            
-            for line in lines:
-                if line.strip():
-                    # Handle indentation
-                    x = 50  # Default left margin
-                    if line.startswith('    '):  # Check for indentation
-                        x += 20
-                    
-                    # Draw text with preserved formatting
-                    c.drawString(x, y, line.strip())
-                    y -= 20  # Line spacing
-                    
-                    # Check if we need a new page
-                    if y < 50:  # Bottom margin
-                        c.showPage()
-                        c.setFont("Helvetica", 12)
-                        y = height - 50
-            
-            c.save()
+            # Use the original PDF as a template for formatting
+            save_text_to_pdf(proofread_text_content, output_path, original_pdf_path)
             
             return jsonify({
                 "download_url": "/download/" + output_filename
