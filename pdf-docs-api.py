@@ -764,8 +764,7 @@ def extract_text_with_formatting(pdf_path):
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
-    Saves proofread text to a new PDF file using pdfplumber for text extraction
-    and reportlab for PDF generation with advanced positioning and color handling.
+    Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
     """
     try:
         # Register fonts
@@ -780,22 +779,13 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             page_width = first_page.width
             page_height = first_page.height
             
-            # Create a new PDF with reportlab
+            # Create a new PDF with reportlab using exact dimensions
             c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
             
             # Extract text with formatting
             formatted_text = extract_text_with_formatting(original_pdf_path)
             
-            # Detect paragraphs
-            paragraphs = detect_paragraphs(formatted_text)
-            
-            # Detect lists
-            lists = detect_lists(formatted_text)
-            
-            # Detect headers and footers
-            header_footer_info = detect_headers_footers(original_pdf_path)
-            
-            # Split text into paragraphs for proofreading
+            # Split text into paragraphs while preserving line breaks
             if isinstance(text, str):
                 proofread_paragraphs = text.split('\n')
             else:
@@ -808,161 +798,69 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             for page_num, (page, mupdf_page) in enumerate(zip(pdf.pages, doc)):
                 logger.info(f"Processing page {page_num + 1}")
                 
-                # Get lines for this page
-                page_lines = [line for line in formatted_text if line['page'] == page_num]
+                # Get words with formatting for this page
+                words = page.extract_words(
+                    keep_blank_chars=True,
+                    x_tolerance=3,
+                    y_tolerance=3,
+                    extra_attrs=['fontname', 'size', 'upright', 'top', 'bottom']
+                )
                 
-                # Get paragraphs for this page
-                page_paragraphs = [p for p in paragraphs if p['lines'][0]['page'] == page_num]
+                # Group words by line based on vertical position
+                lines = defaultdict(list)
+                for word in words:
+                    y_pos = round(word['top'], 1)
+                    lines[y_pos].append(word)
                 
-                # Get lists for this page
-                page_lists = [l for l in lists if l['items'][0]['line_index'] < len(page_lines) and 
-                             page_lines[l['items'][0]['line_index']]['page'] == page_num]
+                # Sort lines by vertical position
+                sorted_lines = sorted(lines.items(), key=lambda x: x[0])
                 
-                # Process each paragraph
-                for paragraph in page_paragraphs:
+                # Process each line
+                for y_pos, line_words in sorted_lines:
                     if current_paragraph >= len(proofread_paragraphs):
                         break
-                        
-                    # Check if this is a table
-                    if paragraph['lines'][0].get('is_table', False):
-                        # Get table data
-                        table_data = paragraph['lines'][0].get('table_data', [])
-                        
-                        # Get table position
-                        first_line = paragraph['lines'][0]
-                        last_line = paragraph['lines'][-1]
-                        
-                        x0 = first_line['words'][0]['x0']
-                        y0 = first_line['y_pos']
-                        x1 = last_line['words'][-1]['x0'] + last_line['words'][-1]['width']
-                        y1 = last_line['y_pos'] + last_line['words'][-1]['height']
-                        
-                        # Get font and color
-                        font = get_font_name(first_line['words'][0].get('fontname', 'Helvetica'))
-                        fontsize = float(first_line['words'][0].get('size', 11))
-                        
-                        # Get color
-                        bbox = fitz.Rect(x0, y0, x1, y1)
-                        color = get_text_color(mupdf_page, bbox)
-                        if color:
-                            r, g, b = normalize_color(color)
-                            fill_color = Color(r, g, b)
-                        else:
-                            fill_color = Color(0, 0, 0)  # Default to black
-                            
-                        # Create table
-                        create_table(c, table_data, x0, page_height - y1, x1 - x0, y1 - y0, 
-                                    font, fontsize, fill_color)
-                                    
-                        # Update current paragraph
-                        current_paragraph += 1
-                        continue
-                        
-                    # Check if this is a list
-                    is_list = False
-                    list_type = None
-                    for list_obj in page_lists:
-                        if paragraph['lines'][0] in [page_lines[item['line_index']] for item in list_obj['items']]:
-                            is_list = True
-                            list_type = list_obj['type']
-                            break
-                            
-                    # Process each line in the paragraph
-                    for line in paragraph['lines']:
-                        if current_paragraph >= len(proofread_paragraphs):
-                            break
-                            
-                        # Save canvas state
-                        c.saveState()
-                        
-                        # Get line properties
-                        y_pos = line['y_pos']
-                        
-                        # Process each word in the line
-                        x_pos = line['words'][0]['x0']  # Start with the first word's x position
-                        
-                        # Get the first word's properties for the line
-                        first_word = line['words'][0]
-                        font = get_font_name(first_word.get('fontname', 'Helvetica'))
-                        fontsize = float(first_word.get('size', 11))
-                        
-                        # Get color from original PDF
-                        bbox = fitz.Rect(first_word['x0'], first_word['top'], 
-                                        first_word['x0'] + first_word['width'], 
-                                        first_word['top'] + first_word['height'])
-                        color = get_text_color(mupdf_page, bbox)
-                        if color:
-                            r, g, b = normalize_color(color)
-                            fill_color = Color(r, g, b)
-                        else:
-                            fill_color = Color(0, 0, 0)  # Default to black
-                        
-                        # Calculate text metrics for better positioning
-                        c.setFont(font, fontsize)
-                        text_width = c.stringWidth(proofread_paragraphs[current_paragraph], font, fontsize)
-                        text_height = fontsize * 1.2  # Approximate height
-                        
-                        # Calculate baseline position for better text alignment
-                        baseline_offset = fontsize * 0.2  # Approximate baseline offset
-                        
-                        # Calculate leading (line spacing) based on font size
-                        leading = fontsize * 1.5  # Standard leading is 1.5x font size
-                        
-                        # Adjust position for better alignment
-                        y_pos_adjusted = page_height - y_pos - text_height/2 + baseline_offset
-                        
-                        # Handle lists
-                        if is_list:
-                            # Add bullet or number
-                            if list_type == 'bullet':
-                                bullet = '•'
-                                bullet_width = c.stringWidth(bullet, font, fontsize)
-                                c.setFillColor(fill_color)
-                                c.drawString(x_pos - bullet_width - 10, y_pos_adjusted, bullet)
-                                x_pos += 10  # Indent the text
-                            elif list_type == 'numbered':
-                                # Find the list item number
-                                for list_obj in page_lists:
-                                    for i, item in enumerate(list_obj['items']):
-                                        if line == page_lines[item['line_index']]:
-                                            number = f"{i+1}."
-                                            number_width = c.stringWidth(number, font, fontsize)
-                                            c.setFillColor(fill_color)
-                                            c.drawString(x_pos - number_width - 10, y_pos_adjusted, number)
-                                            x_pos += 10  # Indent the text
-                                            break
-                        
-                        # Draw text with improved positioning
-                        text_object = c.beginText(x_pos, y_pos_adjusted)
-                        text_object.setFont(font, fontsize)
-                        text_object.setFillColor(fill_color)
-                        text_object.textLine(proofread_paragraphs[current_paragraph])
-                        c.drawText(text_object)
-                        current_paragraph += 1
-                        
-                        # Restore canvas state
-                        c.restoreState()
+                    
+                    # Sort words in line by horizontal position
+                    line_words.sort(key=lambda x: x['x0'])
+                    
+                    # Get formatting from first word in line
+                    first_word = line_words[0]
+                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                    font_size = float(first_word.get('size', 11))
+                    
+                    # Get text color
+                    bbox = fitz.Rect(first_word['x0'], first_word['top'], 
+                                   first_word['x0'] + first_word['width'], 
+                                   first_word['bottom'])
+                    color = get_text_color(mupdf_page, bbox)
+                    r, g, b = normalize_color(color) if color else (0, 0, 0)
+                    
+                    # Calculate text position
+                    x_pos = first_word['x0']
+                    y_pos_adjusted = page_height - first_word['top'] - font_size/3
+                    
+                    # Create text object with exact formatting
+                    text_object = c.beginText(x_pos, y_pos_adjusted)
+                    text_object.setFont(font_name, font_size)
+                    text_object.setFillColorRGB(r, g, b)
+                    
+                    # Add text while preserving spacing
+                    text_object.textLine(proofread_paragraphs[current_paragraph])
+                    c.drawText(text_object)
+                    
+                    current_paragraph += 1
                 
-                # Add headers and footers
-                for header in header_footer_info['headers']:
-                    if header['page'] == page_num:
-                        c.setFont('Helvetica', 10)
-                        c.setFillColor(Color(0.5, 0.5, 0.5))  # Gray color for headers
-                        c.drawString(50, page_height - 30, header['text'])
-                        
-                for footer in header_footer_info['footers']:
-                    if footer['page'] == page_num:
-                        c.setFont('Helvetica', 10)
-                        c.setFillColor(Color(0.5, 0.5, 0.5))  # Gray color for footers
-                        c.drawString(50, 30, footer['text'])
+                # Add page numbers if present in original
+                if page.page_number is not None:
+                    c.setFont('Helvetica', 10)
+                    c.drawString(page_width/2, 30, str(page.page_number))
                 
-                # Move to next page
                 c.showPage()
             
             # Save the PDF
             c.save()
             doc.close()
-            logger.info("PDF saved successfully")
+            logger.info("PDF saved successfully with original formatting")
             
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
