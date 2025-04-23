@@ -989,6 +989,19 @@ def convert_and_proofread():
         # Proofread the text
         proofread_text_content, grammar_errors = proofread_text(extracted_text)
 
+        # Get selected suggestions if provided
+        selected_suggestions = {}
+        if 'selected_suggestions' in request.form:
+            try:
+                selected_suggestions = dict(json.loads(request.form['selected_suggestions']))
+            except:
+                logger.warning("Failed to parse selected suggestions")
+
+        # Apply selected suggestions to the proofread text
+        for original_word, selected_word in selected_suggestions.items():
+            # Replace the original word with the selected suggestion
+            proofread_text_content = proofread_text_content.replace(original_word, selected_word)
+
         # Save proofread text back to PDF
         proofread_pdf_filename = "proofread_" + filename
         proofread_pdf_path = os.path.join(OUTPUT_FOLDER, proofread_pdf_filename)
@@ -997,7 +1010,7 @@ def convert_and_proofread():
         return jsonify({
             "original_text": extracted_text,
             "proofread_text": proofread_text_content,
-            "grammar_errors": grammar_errors,  # Provide detailed grammar corrections
+            "grammar_errors": grammar_errors,
             "download_url": "/download/" + proofread_pdf_filename
         })
 
@@ -1015,4 +1028,3 @@ def download_file(filename):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
-    
