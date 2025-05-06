@@ -769,102 +769,93 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     try:
         # Register fonts
         register_fonts()
-        
-        # Open the original PDF with both pdfplumber and PyMuPDF
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
-            
-            # Get page dimensions from the first page
             first_page = pdf.pages[0]
             page_width = first_page.width
             page_height = first_page.height
-            
-            # Create a new PDF with reportlab using exact dimensions
             c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
-            
-            # Extract text with formatting
             formatted_text = extract_text_with_formatting(original_pdf_path)
-            
-            # Split text into paragraphs while preserving line breaks
             if isinstance(text, str):
                 proofread_paragraphs = text.split('\n')
             else:
                 proofread_paragraphs = text
-            
-            # Track current paragraph
             current_paragraph = 0
-            
-            # Process each page
             for page_num, (page, mupdf_page) in enumerate(zip(pdf.pages, doc)):
                 logger.info(f"Processing page {page_num + 1}")
-                
-                # Get words with formatting for this page
                 words = page.extract_words(
                     keep_blank_chars=True,
                     x_tolerance=3,
                     y_tolerance=3,
                     extra_attrs=['fontname', 'size', 'upright', 'top', 'bottom']
                 )
-                
-                # Group words by line based on vertical position
                 lines = defaultdict(list)
                 for word in words:
                     y_pos = round(word['top'], 1)
                     lines[y_pos].append(word)
-                
-                # Sort lines by vertical position
                 sorted_lines = sorted(lines.items(), key=lambda x: x[0])
-                
-                # Process each line
                 for y_pos, line_words in sorted_lines:
                     if current_paragraph >= len(proofread_paragraphs):
-                        break
-                    
-                    # Sort words in line by horizontal position
+                        logger.error(f"Mismatch: more lines in original PDF than in proofread text on page {page_num+1}")
+                        raise ValueError("The proofread text does not match the original PDF layout. Complex layouts are not supported.")
                     line_words.sort(key=lambda x: x['x0'])
-                    
-                    # Get formatting from first word in line
                     first_word = line_words[0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
-                    
-                    # Get text color
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], 
                                    first_word['x0'] + first_word['width'], 
                                    first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
-                    
-                    # Calculate text position
                     x_pos = first_word['x0']
                     y_pos_adjusted = page_height - first_word['top'] - font_size/3
-                    
-                    # Create text object with exact formatting
                     text_object = c.beginText(x_pos, y_pos_adjusted)
                     text_object.setFont(font_name, font_size)
                     text_object.setFillColorRGB(r, g, b)
-                    
-                    # Add text while preserving spacing
                     text_object.textLine(proofread_paragraphs[current_paragraph])
                     c.drawText(text_object)
-                    
                     current_paragraph += 1
-                
-                # Add page numbers if present in original
                 if page.page_number is not None:
                     c.setFont('Helvetica', 10)
                     c.drawString(page_width/2, 30, str(page.page_number))
-                
                 c.showPage()
-            
-            # Save the PDF
             c.save()
             doc.close()
             logger.info("PDF saved successfully with original formatting")
-            
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
+
+# --- New: Overlay proofread text on original PDF using PyMuPDF ---
+def overlay_text_on_pdf(proofread_text, output_pdf_path, original_pdf_path):
+    """
+    Overlays the proofread text onto the original PDF, replacing text blocks but preserving layout, images, and tables.
+    """
+    try:
+        doc = fitz.open(original_pdf_path)
+        # Split proofread text into lines (naive, for demo)
+        proof_lines = proofread_text.split('\n')
+        proof_idx = 0
+        for page in doc:
+            blocks = page.get_text("blocks")
+            for block in blocks:
+                x0, y0, x1, y1, text, *_ = block
+                if text.strip():
+                    # Replace the text block with proofread text line
+                    if proof_idx < len(proof_lines):
+                        page.add_redact_annot(fitz.Rect(x0, y0, x1, y1), fill=(1,1,1))
+                        proof_line = proof_lines[proof_idx]
+                        proof_idx += 1
+                        # Apply redaction and insert new text
+                        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+                        page.insert_text((x0, y0), proof_line, fontsize=12, color=(0,0,0))
+            # If more proofread lines than blocks, ignore extra lines
+        doc.save(output_pdf_path)
+        doc.close()
+        logger.info("PDF saved with overlayed proofread text.")
+    except Exception as e:
+        logger.error(f"Overlay error: {str(e)}")
+        raise ValueError("Overlaying proofread text failed: " + str(e))
 
 @app.route('/convert', methods=['POST'])
 def convert_and_proofread():
@@ -872,46 +863,39 @@ def convert_and_proofread():
     try:
         if 'file' not in request.files and 'text' not in request.form:
             return jsonify({"error": "No file or text provided"}), 400
-
-        # Handle text and suggestions if provided directly
         if 'text' in request.form:
             proofread_text_content = request.form['text']
             original_filename = request.form.get('filename', 'document.pdf')
-            
-            # Store the original file path in a session-like dictionary
             original_pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
-            
-            # Ensure the original file exists
             if not os.path.exists(original_pdf_path):
-                # Try to find the file with "proofread_" prefix removed
                 base_filename = original_filename.replace("proofread_", "", 1)
                 original_pdf_path = os.path.join(UPLOAD_FOLDER, base_filename)
-                
                 if not os.path.exists(original_pdf_path):
                     return jsonify({"error": "Original file not found"}), 404
-            
-            # Get selected suggestions
             selected_suggestions = {}
             if 'selected_suggestions' in request.form:
                 try:
                     selected_suggestions = dict(json.loads(request.form['selected_suggestions']))
-                    # Apply selected suggestions
                     for original_word, selected_word in selected_suggestions.items():
                         proofread_text_content = proofread_text_content.replace(original_word, selected_word)
                 except Exception as e:
                     logger.warning(f"Failed to parse selected suggestions: {str(e)}")
-
-            # Generate PDF with the updated text
-            output_filename = "proofread_" + original_filename.replace("proofread_", "", 1)  # Avoid duplicate prefix
+            output_filename = "proofread_" + original_filename.replace("proofread_", "", 1)
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
-            
-            # Use the original PDF as a template for formatting
-            save_text_to_pdf(proofread_text_content, output_path, original_pdf_path)
-            
+            # Try overlay method first
+            try:
+                overlay_text_on_pdf(proofread_text_content, output_path, original_pdf_path)
+            except Exception as overlay_err:
+                logger.warning(f"Overlay failed: {overlay_err}")
+                # Fallback to old method
+                try:
+                    save_text_to_pdf(proofread_text_content, output_path, original_pdf_path)
+                except Exception as layout_err:
+                    logger.error(f"Both overlay and layout methods failed: {layout_err}")
+                    return jsonify({"error": "This PDF has a complex layout (tables, columns, or images) that cannot be processed for download with suggestions. Please use a simpler PDF or contact support."}), 400
             return jsonify({
                 "download_url": "/download/" + output_filename
             })
-
         # Handle file upload case
         file = request.files['file']
         if file.filename == '':
