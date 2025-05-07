@@ -972,11 +972,15 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
 def convert_and_proofread():
     """Handles PDF proofreading."""
     try:
+        logger.info("Received file upload request")
+        
         if 'file' not in request.files and 'text' not in request.form:
+            logger.error("No file or text provided in request")
             return jsonify({"error": "No file or text provided"}), 400
 
         # Handle text and suggestions if provided directly
         if 'text' in request.form:
+            logger.info("Processing text-based request")
             proofread_text_content = request.form['text']
             original_filename = request.form.get('filename', 'document.pdf')
             
@@ -990,6 +994,7 @@ def convert_and_proofread():
                 original_pdf_path = os.path.join(UPLOAD_FOLDER, base_filename)
                 
                 if not os.path.exists(original_pdf_path):
+                    logger.error(f"Original file not found: {original_filename}")
                     return jsonify({"error": "Original file not found"}), 404
             
             # Get selected suggestions
@@ -1017,6 +1022,7 @@ def convert_and_proofread():
         # Handle file upload case
         file = request.files['file']
         if file.filename == '':
+            logger.error("No file selected in upload")
             return jsonify({"error": "No selected file"}), 400
 
         filename = secure_filename(file.filename)
@@ -1026,13 +1032,28 @@ def convert_and_proofread():
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
         
         # Save the uploaded file
-        file.save(pdf_path)
+        try:
+            file.save(pdf_path)
+            logger.info(f"Successfully saved uploaded file: {filename}")
+        except Exception as e:
+            logger.error(f"Error saving uploaded file: {str(e)}")
+            return jsonify({"error": f"Error saving file: {str(e)}"}), 500
 
         # Extract text from PDF
-        extracted_text = extract_text_from_pdf(pdf_path)
+        try:
+            extracted_text = extract_text_from_pdf(pdf_path)
+            logger.info("Successfully extracted text from PDF")
+        except Exception as e:
+            logger.error(f"Error extracting text from PDF: {str(e)}")
+            return jsonify({"error": f"Error extracting text: {str(e)}"}), 500
 
         # Proofread the text
-        proofread_text_content, grammar_errors = proofread_text(extracted_text)
+        try:
+            proofread_text_content, grammar_errors = proofread_text(extracted_text)
+            logger.info("Successfully proofread text")
+        except Exception as e:
+            logger.error(f"Error proofreading text: {str(e)}")
+            return jsonify({"error": f"Error proofreading text: {str(e)}"}), 500
 
         # Save proofread text back to PDF
         proofread_pdf_filename = "proofread_" + filename
@@ -1041,8 +1062,13 @@ def convert_and_proofread():
         # Create OUTPUT_FOLDER if it doesn't exist
         os.makedirs(OUTPUT_FOLDER, exist_ok=True)
         
-        # Save the proofread PDF using the original as template
-        save_text_to_pdf(proofread_text_content, proofread_pdf_path, pdf_path)
+        try:
+            # Save the proofread PDF using the original as template
+            save_text_to_pdf(proofread_text_content, proofread_pdf_path, pdf_path)
+            logger.info("Successfully saved proofread PDF")
+        except Exception as e:
+            logger.error(f"Error saving proofread PDF: {str(e)}")
+            return jsonify({"error": f"Error saving proofread PDF: {str(e)}"}), 500
 
         return jsonify({
             "original_text": extracted_text,
