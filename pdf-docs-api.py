@@ -838,7 +838,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 sorted_lines = sorted(lines.items(), key=lambda x: x[0])
                 
                 # Process each line
-                for y_pos, line_words in sorted_lines:
+                for idx, (y_pos, line_words) in enumerate(sorted_lines):
                     if current_paragraph >= len(proofread_paragraphs):
                         break
                     
@@ -927,8 +927,8 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         c.drawString(x_pos, y_pos_adjusted, text)
                     
                     # Add line spacing based on original
-                    if current_paragraph < len(proofread_paragraphs) - 1:
-                        next_line = sorted_lines[sorted_lines.index((y_pos, line_words)) + 1][1][0]
+                    if current_paragraph < len(proofread_paragraphs) - 1 and idx + 1 < len(sorted_lines):
+                        next_line = sorted_lines[idx + 1][1][0]
                         line_spacing = next_line['top'] - first_word['bottom']
                         if line_spacing > 0:
                             c.translate(0, -line_spacing)
