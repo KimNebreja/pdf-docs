@@ -966,19 +966,20 @@ def convert_and_proofread():
             logger.info("Processing text-based request")
             proofread_text_content = request.form['text']
             original_filename = request.form.get('filename', 'document.pdf')
+            sanitized_filename = secure_filename(original_filename)
             
             # Store the original file path in a session-like dictionary
-            original_pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
+            original_pdf_path = os.path.join(UPLOAD_FOLDER, sanitized_filename)
             
             # Ensure the original file exists
             if not os.path.exists(original_pdf_path):
                 # Try to find the file with "proofread_" prefix removed
-                base_filename = original_filename.replace("proofread_", "", 1)
+                base_filename = sanitized_filename.replace("proofread_", "", 1)
                 original_pdf_path = os.path.join(UPLOAD_FOLDER, base_filename)
                 
                 if not os.path.exists(original_pdf_path):
-                    logger.error(f"Original file not found: {original_filename}")
-                    return jsonify({"error": "Original file not found"}), 404
+                    logger.error(f"Original file not found: {sanitized_filename}")
+                    return jsonify({"error": f"Original file not found: {sanitized_filename}"}), 404
             
             # Get selected suggestions
             selected_suggestions = {}
@@ -992,14 +993,15 @@ def convert_and_proofread():
                     logger.warning(f"Failed to parse selected suggestions: {str(e)}")
 
             # Generate PDF with the updated text
-            output_filename = "proofread_" + original_filename.replace("proofread_", "", 1)  # Avoid duplicate prefix
+            output_filename = "proofread_" + sanitized_filename.replace("proofread_", "", 1)  # Avoid duplicate prefix
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
             
             # Use the original PDF as a template for formatting
             save_text_to_pdf(proofread_text_content, output_path, original_pdf_path)
             
             return jsonify({
-                "download_url": "/download/" + output_filename
+                "download_url": "/download/" + output_filename,
+                "file_name": sanitized_filename
             })
 
         # Handle file upload case
@@ -1058,7 +1060,7 @@ def convert_and_proofread():
             "proofread_text": proofread_text_content,
             "grammar_errors": grammar_errors,
             "download_url": "/download/" + proofread_pdf_filename,
-            "file_name": filename  # Add filename to response for frontend reference
+            "file_name": filename  # Always return sanitized filename
         })
 
     except Exception as e:
