@@ -480,7 +480,7 @@ def get_font_name(font_name):
     font_name = re.sub(r'^[a-z]+[_-]', '', font_name)
     font_name = re.sub(r'[_-][a-z]+$', '', font_name)
     
-    # Map common font names
+    # Map common font names with style detection
     font_map = {
         "helv": "Helvetica",
         "helvetica": "Helvetica",
@@ -529,25 +529,47 @@ def get_font_name(font_name):
         "andale": "Courier"
     }
     
+    # Check for style indicators in the original font name
+    is_bold = 'bold' in font_name or 'heavy' in font_name or 'black' in font_name
+    is_italic = 'italic' in font_name or 'oblique' in font_name or 'slant' in font_name
+    
     # Check if font name is in our mapping
     if font_name in font_map:
-        return font_map[font_name]
+        base_font = font_map[font_name]
+    else:
+        # Check if font name contains any of our mapped names
+        for key in font_map:
+            if key in font_name:
+                base_font = font_map[key]
+                break
+        else:
+            # Default to Helvetica if no match
+            base_font = "Helvetica"
     
-    # Check if font name contains any of our mapped names
-    for key in font_map:
-        if key in font_name:
-            return font_map[key]
+    # Apply styles to base font
+    if is_bold and is_italic:
+        if base_font == "Helvetica":
+            return "Helvetica-BoldOblique"
+        elif base_font == "Times-Roman":
+            return "Times-BoldItalic"
+        elif base_font == "Courier":
+            return "Courier-BoldOblique"
+    elif is_bold:
+        if base_font == "Helvetica":
+            return "Helvetica-Bold"
+        elif base_font == "Times-Roman":
+            return "Times-Bold"
+        elif base_font == "Courier":
+            return "Courier-Bold"
+    elif is_italic:
+        if base_font == "Helvetica":
+            return "Helvetica-Oblique"
+        elif base_font == "Times-Roman":
+            return "Times-Italic"
+        elif base_font == "Courier":
+            return "Courier-Oblique"
     
-    # Check for bold/italic variants
-    if "bold" in font_name and "italic" in font_name:
-        return "Times-BoldItalic"
-    elif "bold" in font_name:
-        return "Helvetica-Bold"
-    elif "italic" in font_name or "oblique" in font_name:
-        return "Times-Italic"
-    
-    # Default to Helvetica if no match
-    return "Helvetica"
+    return base_font
 
 def register_fonts():
     """Registers common fonts with ReportLab."""
@@ -803,7 +825,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     keep_blank_chars=True,
                     x_tolerance=3,
                     y_tolerance=3,
-                    extra_attrs=['fontname', 'size', 'upright', 'top', 'bottom']
+                    extra_attrs=['fontname', 'size', 'upright', 'top', 'bottom', 'x0', 'x1', 'width']
                 )
                 
                 # Group words by line based on vertical position
@@ -841,12 +863,92 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     
                     # Create text object with exact formatting
                     text_object = c.beginText(x_pos, y_pos_adjusted)
-                    text_object.setFont(font_name, font_size)
-                    text_object.setFillColorRGB(r, g, b)
                     
-                    # Add text while preserving spacing
-                    text_object.textLine(proofread_paragraphs[current_paragraph])
+                    # Set font with style detection
+                    if 'bold' in font_name.lower():
+                        text_object.setFont(font_name, font_size)
+                        text_object.setFillColorRGB(r, g, b)
+                    elif 'italic' in font_name.lower():
+                        text_object.setFont(font_name, font_size)
+                        text_object.setFillColorRGB(r, g, b)
+                    else:
+                        text_object.setFont(font_name, font_size)
+                        text_object.setFillColorRGB(r, g, b)
+                    
+                    # Calculate line width for alignment
+                    line_width = line_words[-1]['x1'] - line_words[0]['x0']
+                    
+                    # Get text alignment from original
+                    text_align = 'left'  # Default
+                    if len(line_words) > 1:
+                        # Check if text is centered
+                        page_center = page_width / 2
+                        line_center = (line_words[0]['x0'] + line_words[-1]['x1']) / 2
+                        if abs(page_center - line_center) < 20:  # 20pt tolerance
+                            text_align = 'center'
+                        # Check if text is right-aligned
+                        elif line_words[0]['x0'] > page_width * 0.7:
+                            text_align = 'right'
+                        # Check if text is justified
+                        else:
+                            # Calculate average word spacing
+                            total_spacing = 0
+                            word_count = len(line_words)
+                            if word_count > 1:
+                                for i in range(word_count - 1):
+                                    spacing = line_words[i + 1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
+                                    total_spacing += spacing
+                                avg_spacing = total_spacing / (word_count - 1)
+                                
+                                # Check if spacing is relatively uniform (justified text)
+                                is_uniform = True
+                                for i in range(word_count - 1):
+                                    spacing = line_words[i + 1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
+                                    if abs(spacing - avg_spacing) > avg_spacing * 0.2:  # 20% tolerance
+                                        is_uniform = False
+                                        break
+                                
+                                if is_uniform and word_count > 2:  # Need at least 3 words for justified text
+                                    text_align = 'justify'
+                    
+                    # Add text with proper alignment
+                    text = proofread_paragraphs[current_paragraph]
+                    if text_align == 'center':
+                        text_object.textCentered(text, x_pos + line_width/2)
+                    elif text_align == 'right':
+                        text_object.textRight(text, x_pos + line_width)
+                    elif text_align == 'justify':
+                        # For justified text, we need to calculate word spacing
+                        words = text.split()
+                        if len(words) > 1:
+                            # Calculate total width of text
+                            total_text_width = 0
+                            for word in words:
+                                total_text_width += c.stringWidth(word, font_name, font_size)
+                            
+                            # Calculate space between words
+                            space_width = (line_width - total_text_width) / (len(words) - 1)
+                            
+                            # Draw each word with calculated spacing
+                            current_x = x_pos
+                            for i, word in enumerate(words):
+                                text_object.setTextOrigin(current_x, y_pos_adjusted)
+                                text_object.textOut(word)
+                                if i < len(words) - 1:  # Don't add space after last word
+                                    current_x += c.stringWidth(word, font_name, font_size) + space_width
+                        else:
+                            text_object.textLine(text)  # Single word, no justification needed
+                    else:
+                        text_object.textLine(text)
+                    
                     c.drawText(text_object)
+                    
+                    # Add line spacing based on original
+                    if current_paragraph < len(proofread_paragraphs) - 1:
+                        next_line = sorted_lines[sorted_lines.index((y_pos, line_words)) + 1][1][0]
+                        line_spacing = next_line['top'] - first_word['bottom']
+                        if line_spacing > 0:
+                            c.translate(0, -line_spacing)
                     
                     current_paragraph += 1
                 
