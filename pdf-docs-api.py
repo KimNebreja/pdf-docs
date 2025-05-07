@@ -861,20 +861,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     x_pos = first_word['x0']
                     y_pos_adjusted = page_height - first_word['top'] - font_size/3
                     
-                    # Create text object with exact formatting
-                    text_object = c.beginText(x_pos, y_pos_adjusted)
-                    
-                    # Set font with style detection
-                    if 'bold' in font_name.lower():
-                        text_object.setFont(font_name, font_size)
-                        text_object.setFillColorRGB(r, g, b)
-                    elif 'italic' in font_name.lower():
-                        text_object.setFont(font_name, font_size)
-                        text_object.setFillColorRGB(r, g, b)
-                    else:
-                        text_object.setFont(font_name, font_size)
-                        text_object.setFillColorRGB(r, g, b)
-                    
                     # Calculate line width for alignment
                     line_width = line_words[-1]['x1'] - line_words[0]['x0']
                     
@@ -911,12 +897,13 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                                 if is_uniform and word_count > 2:  # Need at least 3 words for justified text
                                     text_align = 'justify'
                     
-                    # Add text with proper alignment
                     text = proofread_paragraphs[current_paragraph]
+                    c.setFont(font_name, font_size)
+                    c.setFillColorRGB(r, g, b)
                     if text_align == 'center':
-                        text_object.textCentered(text, x_pos + line_width/2)
+                        c.drawCentredString(x_pos + line_width/2, y_pos_adjusted, text)
                     elif text_align == 'right':
-                        text_object.textRight(text, x_pos + line_width)
+                        c.drawRightString(x_pos + line_width, y_pos_adjusted, text)
                     elif text_align == 'justify':
                         # For justified text, we need to calculate word spacing
                         words = text.split()
@@ -925,23 +912,19 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             total_text_width = 0
                             for word in words:
                                 total_text_width += c.stringWidth(word, font_name, font_size)
-                            
                             # Calculate space between words
                             space_width = (line_width - total_text_width) / (len(words) - 1)
-                            
                             # Draw each word with calculated spacing
                             current_x = x_pos
                             for i, word in enumerate(words):
-                                text_object.setTextOrigin(current_x, y_pos_adjusted)
-                                text_object.textOut(word)
+                                c.drawString(current_x, y_pos_adjusted, word)
                                 if i < len(words) - 1:  # Don't add space after last word
                                     current_x += c.stringWidth(word, font_name, font_size) + space_width
                         else:
-                            text_object.textLine(text)  # Single word, no justification needed
+                            c.drawString(x_pos, y_pos_adjusted, text)  # Single word, no justification needed
                     else:
-                        text_object.textLine(text)
-                    
-                    c.drawText(text_object)
+                        # Left align (default)
+                        c.drawString(x_pos, y_pos_adjusted, text)
                     
                     # Add line spacing based on original
                     if current_paragraph < len(proofread_paragraphs) - 1:
