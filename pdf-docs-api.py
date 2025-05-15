@@ -765,104 +765,106 @@ def extract_text_with_formatting(pdf_path):
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
-    Reflows the proofread text to fit the original line positions and widths, wrapping by words.
     """
     try:
+        # Register fonts
         register_fonts()
+        
+        # Open the original PDF with both pdfplumber and PyMuPDF
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
+            
+            # Get page dimensions from the first page
             first_page = pdf.pages[0]
             page_width = first_page.width
             page_height = first_page.height
+            
+            # Create a new PDF with reportlab using exact dimensions
             c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
+            
+            # Extract text with formatting
             formatted_text = extract_text_with_formatting(original_pdf_path)
-
-            # Prepare proofread text as a single string (remove all line breaks)
+            
+            # Split text into paragraphs while preserving line breaks
             if isinstance(text, str):
-                proofread_text = text.replace('\n', ' ')
+                proofread_paragraphs = text.split('\n')
             else:
-                proofread_text = ' '.join(text)
-            proofread_text = re.sub(r'\s+', ' ', proofread_text).strip()
-            words = proofread_text.split(' ')
-            word_index = 0
-            num_words = len(words)
-
-            # Group formatted_text by page
-            lines_by_page = {}
-            for line in formatted_text:
-                page_num = line.get('page', 0)
-                if page_num not in lines_by_page:
-                    lines_by_page[page_num] = []
-                lines_by_page[page_num].append(line)
-
-            num_pages = len(pdf.pages)
-            for page_num in range(num_pages):
-                mupdf_page = doc[page_num]
-                page_lines = lines_by_page.get(page_num, [])
-                for line_obj in page_lines:
-                    line_words = line_obj['words']
-                    if not line_words or word_index >= num_words:
-                        continue
+                proofread_paragraphs = text
+            
+            # Track current paragraph
+            current_paragraph = 0
+            
+            # Process each page
+            for page_num, (page, mupdf_page) in enumerate(zip(pdf.pages, doc)):
+                logger.info(f"Processing page {page_num + 1}")
+                
+                # Get words with formatting for this page
+                words = page.extract_words(
+                    keep_blank_chars=True,
+                    x_tolerance=3,
+                    y_tolerance=3,
+                    extra_attrs=['fontname', 'size', 'upright', 'top', 'bottom']
+                )
+                
+                # Group words by line based on vertical position
+                lines = defaultdict(list)
+                for word in words:
+                    y_pos = round(word['top'], 1)
+                    lines[y_pos].append(word)
+                
+                # Sort lines by vertical position
+                sorted_lines = sorted(lines.items(), key=lambda x: x[0])
+                
+                # Process each line
+                for y_pos, line_words in sorted_lines:
+                    if current_paragraph >= len(proofread_paragraphs):
+                        break
+                    
+                    # Sort words in line by horizontal position
+                    line_words.sort(key=lambda x: x['x0'])
+                    
+                    # Get formatting from first word in line
                     first_word = line_words[0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
+                    
+                    # Get text color
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], 
                                    first_word['x0'] + first_word['width'], 
                                    first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
+                    
+                    # Calculate text position
                     x_pos = first_word['x0']
                     y_pos_adjusted = page_height - first_word['top'] - font_size/3
-                    if len(line_words) > 1:
-                        last_word = line_words[-1]
-                        line_x1 = last_word['x0'] + last_word['width']
-                    else:
-                        line_x1 = x_pos + first_word['width'] * 10  # fallback
-                    available_width = line_x1 - x_pos
-
-                    # Build the line by adding words until width is exceeded
-                    line_str = ''
-                    test_str = ''
-                    while word_index < num_words:
-                        next_word = words[word_index]
-                        if line_str:
-                            test_str = line_str + ' ' + next_word
-                        else:
-                            test_str = next_word
-                        width = c.stringWidth(test_str, font_name, font_size)
-                        if width > available_width:
-                            break
-                        line_str = test_str
-                        word_index += 1
-
-                    if not line_str:
-                        continue  # If no word fits, skip
-
+                    
+                    # Create text object with exact formatting
                     text_object = c.beginText(x_pos, y_pos_adjusted)
                     text_object.setFont(font_name, font_size)
                     text_object.setFillColorRGB(r, g, b)
-                    text_object.textLine(line_str)
+                    
+                    # Add text while preserving spacing
+                    text_object.textLine(proofread_paragraphs[current_paragraph])
                     c.drawText(text_object)
-                if pdf.pages[page_num].page_number is not None:
+                    
+                    current_paragraph += 1
+                
+                # Add page numbers if present in original
+                if page.page_number is not None:
                     c.setFont('Helvetica', 10)
-                    c.drawString(page_width/2, 30, str(pdf.pages[page_num].page_number))
+                    c.drawString(page_width/2, 30, str(page.page_number))
+                
                 c.showPage()
+            
+            # Save the PDF
             c.save()
             doc.close()
             logger.info("PDF saved successfully with original formatting")
+            
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
-
-def clean_text(text):
-    """
-    Removes unwanted square markings and other non-standard characters from text.
-    """
-    # Remove black square (■) and similar artifacts
-    cleaned = re.sub(r'[\u25A0-\u25AF]', '', text)
-    # Optionally, remove other non-printable/control characters
-    cleaned = re.sub(r'[\x00-\x1F\x7F]', '', cleaned)
-    return cleaned
 
 @app.route('/convert', methods=['POST'])
 def convert_and_proofread():
@@ -904,7 +906,7 @@ def convert_and_proofread():
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
             
             # Use the original PDF as a template for formatting
-            save_text_to_pdf(clean_text(proofread_text_content), output_path, original_pdf_path)
+            save_text_to_pdf(proofread_text_content, output_path, original_pdf_path)
             
             return jsonify({
                 "download_url": "/download/" + output_filename
@@ -938,7 +940,7 @@ def convert_and_proofread():
         os.makedirs(OUTPUT_FOLDER, exist_ok=True)
         
         # Save the proofread PDF using the original as template
-        save_text_to_pdf(clean_text(proofread_text_content), proofread_pdf_path, pdf_path)
+        save_text_to_pdf(proofread_text_content, proofread_pdf_path, pdf_path)
 
         return jsonify({
             "original_text": extracted_text,
