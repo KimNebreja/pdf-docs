@@ -864,42 +864,40 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     # Calculate text position and width
                     x_pos = first_word['x0']
                     y_pos_adjusted = page_height - first_word['top'] - font_size/3
-                    line_width = line_words[-1]['x1'] - line_words[0]['x0']
+                    
+                    # Calculate line boundaries and margins
+                    line_start = line_words[0]['x0']
+                    line_end = line_words[-1]['x1']
+                    line_width = line_end - line_start
+                    left_margin = line_start
+                    right_margin = page_width - line_end
                     
                     # Enhanced text alignment detection
                     text_align = 'left'  # Default
                     if len(line_words) > 1:
-                        # Calculate line boundaries
-                        line_start = line_words[0]['x0']
-                        line_end = line_words[-1]['x1']
+                        # Calculate line center and page center
                         line_center = (line_start + line_end) / 2
                         page_center = page_width / 2
                         
-                        # Calculate margins
-                        left_margin = line_start
-                        right_margin = page_width - line_end
+                        # Calculate word spacing statistics
+                        spacings = []
+                        for i in range(len(line_words) - 1):
+                            spacing = line_words[i + 1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
+                            spacings.append(spacing)
                         
-                        # Check for centered text
-                        if abs(page_center - line_center) < 20:  # 20pt tolerance
-                            text_align = 'center'
-                        # Check for right-aligned text
-                        elif right_margin < left_margin * 0.5:  # Right margin is significantly smaller
-                            text_align = 'right'
-                        # Check for justified text
-                        else:
-                            # Calculate word spacing statistics
-                            spacings = []
-                            for i in range(len(line_words) - 1):
-                                spacing = line_words[i + 1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
-                                spacings.append(spacing)
+                        if spacings:
+                            avg_spacing = sum(spacings) / len(spacings)
+                            std_dev = (sum((s - avg_spacing) ** 2 for s in spacings) / len(spacings)) ** 0.5
                             
-                            if spacings:
-                                avg_spacing = sum(spacings) / len(spacings)
-                                std_dev = (sum((s - avg_spacing) ** 2 for s in spacings) / len(spacings)) ** 0.5
-                                
-                                # Text is justified if spacing is relatively uniform
-                                if std_dev < avg_spacing * 0.2 and len(line_words) > 2:
-                                    text_align = 'justify'
+                            # Check for justified text first (most specific)
+                            if std_dev < avg_spacing * 0.2 and len(line_words) > 2:
+                                text_align = 'justify'
+                            # Then check for centered text
+                            elif abs(page_center - line_center) < 20:  # 20pt tolerance
+                                text_align = 'center'
+                            # Then check for right-aligned text
+                            elif right_margin < left_margin * 0.5:  # Right margin is significantly smaller
+                                text_align = 'right'
                     
                     text = proofread_paragraphs[current_paragraph]
                     c.setFont(font_name, font_size)
