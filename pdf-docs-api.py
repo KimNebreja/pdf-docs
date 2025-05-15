@@ -787,11 +787,16 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             formatted_lines = extract_text_with_formatting(original_pdf_path)
             # Detect paragraphs
             paragraphs = detect_paragraphs(formatted_lines)
-            # Split proofread text into paragraphs
+            # Split proofread text into paragraphs using double newlines or fallback to original
             if isinstance(text, str):
-                proofread_paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
+                proofread_paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
             else:
                 proofread_paragraphs = [p.strip() for p in text if p.strip()]
+            # If paragraph count doesn't match, fallback to original for extras
+            while len(proofread_paragraphs) < len(paragraphs):
+                proofread_paragraphs.append(paragraphs[len(proofread_paragraphs)]['text'])
+            if len(proofread_paragraphs) > len(paragraphs):
+                proofread_paragraphs = proofread_paragraphs[:len(paragraphs)]
             # Group lines by page number
             lines_by_page = defaultdict(list)
             for idx, line in enumerate(formatted_lines):
@@ -818,7 +823,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     x1 = max(w['x0'] + w['width'] for w in last_line['words'])
                     y1 = max(l['y_pos'] for l in paragraph['lines']) + last_line['words'][0]['height']
                     width = x1 - x0
-                    height = y1 - y0
+                    height = y1 - y0 + 0.5 * (last_line['words'][0]['height'])  # add padding
                     # Get font and size from first word
                     font_name = get_font_name(first_line['words'][0].get('fontname', 'Helvetica'))
                     font_size = float(first_line['words'][0].get('size', 11))
@@ -831,7 +836,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         alignment=4,  # Justify
                     )
                     # Create Frame and Paragraph
-                    frame = Frame(x0, page_height - y1, width, height, showBoundary=0)
+                    frame = Frame(x0, page_height - y1 - 0.25 * font_size, width, height, showBoundary=0)
                     para = Paragraph(proofread_paragraphs[para_idx], style)
                     frame.addFromList([para], c)
                     para_idx += 1
