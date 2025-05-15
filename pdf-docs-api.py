@@ -791,51 +791,61 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             else:
                 proofread_lines = text
             
-            line_idx = 0
-            for line in formatted_lines:
-                if line_idx >= len(proofread_lines):
-                    break
-                # Get formatting from first word in line
-                if not line['words']:
-                    continue
-                first_word = line['words'][0]
-                font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                font_size = float(first_word.get('size', 11))
-                x_pos = first_word['x0']
-                y_pos = page_height - first_word['top'] - font_size/3
-                # Get text color
-                page_num = line.get('page', 0)
-                mupdf_page = doc[page_num]
-                bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
-                color = get_text_color(mupdf_page, bbox)
-                r, g, b = normalize_color(color) if color else (0, 0, 0)
-                c.setFont(font_name, font_size)
-                c.setFillColorRGB(r, g, b)
-                # If this is a table/header/footer, draw as is
-                if line.get('is_table') or line.get('is_header') or line.get('is_footer'):
-                    c.drawString(x_pos, y_pos, proofread_lines[line_idx])
-                else:
-                    # Justify body text
-                    words = proofread_lines[line_idx].split()
-                    if len(words) > 1:
-                        total_text_width = sum(c.stringWidth(word, font_name, font_size) for word in words)
-                        # Use original line width for justification
-                        orig_line_width = (line['words'][-1]['x0'] + line['words'][-1]['width']) - line['words'][0]['x0']
-                        if orig_line_width > total_text_width:
-                            space_width = (orig_line_width - total_text_width) / (len(words) - 1)
-                        else:
-                            space_width = c.stringWidth(' ', font_name, font_size)
-                        text_obj = c.beginText(x_pos, y_pos)
-                        text_obj.setFont(font_name, font_size)
-                        text_obj.setFillColorRGB(r, g, b)
-                        for i, word in enumerate(words):
-                            text_obj.textOut(word)
-                            if i < len(words) - 1:
-                                text_obj.moveCursor(space_width, 0)
-                        c.drawText(text_obj)
+            # Group lines by page number
+            lines_by_page = defaultdict(list)
+            for idx, line in enumerate(formatted_lines):
+                lines_by_page[line.get('page', 0)].append((line, idx))
+            
+            num_pages = len(pdf.pages)
+            for page_num in range(num_pages):
+                # Set up page dimensions (in case they differ per page)
+                page_obj = pdf.pages[page_num]
+                page_width = page_obj.width
+                page_height = page_obj.height
+                c.setPageSize((page_width, page_height))
+                
+                for line, idx in lines_by_page.get(page_num, []):
+                    if idx >= len(proofread_lines):
+                        break
+                    if not line['words']:
+                        continue
+                    first_word = line['words'][0]
+                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                    font_size = float(first_word.get('size', 11))
+                    x_pos = first_word['x0']
+                    y_pos = page_height - first_word['top'] - font_size/3
+                    mupdf_page = doc[page_num]
+                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                    color = get_text_color(mupdf_page, bbox)
+                    r, g, b = normalize_color(color) if color else (0, 0, 0)
+                    c.setFont(font_name, font_size)
+                    c.setFillColorRGB(r, g, b)
+                    if line.get('is_table') or line.get('is_header') or line.get('is_footer'):
+                        c.drawString(x_pos, y_pos, proofread_lines[idx])
                     else:
-                        c.drawString(x_pos, y_pos, proofread_lines[line_idx])
-                line_idx += 1
+                        words = proofread_lines[idx].split()
+                        if len(words) > 1:
+                            total_text_width = sum(c.stringWidth(word, font_name, font_size) for word in words)
+                            orig_line_width = (line['words'][-1]['x0'] + line['words'][-1]['width']) - line['words'][0]['x0']
+                            if orig_line_width > total_text_width:
+                                space_width = (orig_line_width - total_text_width) / (len(words) - 1)
+                            else:
+                                space_width = c.stringWidth(' ', font_name, font_size)
+                            text_obj = c.beginText(x_pos, y_pos)
+                            text_obj.setFont(font_name, font_size)
+                            text_obj.setFillColorRGB(r, g, b)
+                            for i, word in enumerate(words):
+                                text_obj.textOut(word)
+                                if i < len(words) - 1:
+                                    text_obj.moveCursor(space_width, 0)
+                            c.drawText(text_obj)
+                        else:
+                            c.drawString(x_pos, y_pos, proofread_lines[idx])
+                # Add page numbers if present in original
+                c.setFont('Helvetica', 10)
+                c.drawString(page_width/2, 30, str(page_num + 1))
+                if page_num < num_pages - 1:
+                    c.showPage()
             c.save()
             doc.close()
             logger.info("PDF saved successfully with original formatting")
