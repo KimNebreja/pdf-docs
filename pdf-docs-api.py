@@ -275,6 +275,9 @@ def detect_lists(lines):
         for i, line in enumerate(lines):
             text = line['text'].strip()
             
+            # Compute indentation safely
+            indentation = len(text) - len(text.lstrip())
+            
             # Check if this line is a list item
             is_bullet = bool(bullet_pattern.match(text))
             is_numbered = bool(number_pattern.match(text))
@@ -286,22 +289,25 @@ def detect_lists(lines):
                         'items': [],
                         'type': 'bullet' if is_bullet else 'numbered',
                         'start_line': i,
-                        'indentation': len(text) - len(text.lstrip())
+                        'indentation': indentation
                     }
                 
                 # Add item to current list
                 current_list['items'].append({
                     'text': text,
                     'line_index': i,
-                    'indentation': len(text) - len(text.lstrip())
+                    'indentation': indentation
                 })
             else:
                 # If we have a current list and this line is not a list item
                 if current_list:
                     # Check if this line is a continuation of the previous list item
+                    prev_item = current_list['items'][-1] if current_list['items'] else None
+                    prev_indent = prev_item['indentation'] if prev_item else 0
+                    line_indent = line.get('indentation', indentation)
                     if (i > 0 and 
                         lines[i-1]['text'].strip() and 
-                        line['indentation'] > current_list['indentation']):
+                        line_indent > current_list.get('indentation', 0)):
                         # This is a continuation of the previous list item
                         current_list['items'][-1]['text'] += ' ' + text
                     else:
