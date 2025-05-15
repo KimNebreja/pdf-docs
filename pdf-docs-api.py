@@ -624,7 +624,7 @@ def create_table(c, table_data, x, y, width, height, font, fontsize, fill_color)
         
         # Create table style
         style = [
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('ALIGN', (0, 0), (-1, -1), 'JUSTIFY'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('FONTNAME', (0, 0), (-1, -1), font),
             ('FONTSIZE', (0, 0), (-1, -1), fontsize),
@@ -843,9 +843,26 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     text_object = c.beginText(x_pos, y_pos_adjusted)
                     text_object.setFont(font_name, font_size)
                     text_object.setFillColorRGB(r, g, b)
+                    text_object.setTextRenderMode(0)  # Normal rendering mode
+                    text_object.setWordSpace(0)  # Reset word spacing
+                    text_object.setCharSpace(0)  # Reset character spacing
                     
-                    # Add text while preserving spacing
-                    text_object.textLine(proofread_paragraphs[current_paragraph])
+                    # Add text while preserving spacing and justifying
+                    text = proofread_paragraphs[current_paragraph]
+                    words = text.split()
+                    if len(words) > 1:
+                        # Calculate total width of text
+                        total_width = sum(c.stringWidth(word, font_name, font_size) for word in words)
+                        # Calculate space between words for justification
+                        space_width = (page_width - total_width) / (len(words) - 1)
+                        # Add each word with calculated spacing
+                        for i, word in enumerate(words):
+                            text_object.textOut(word)
+                            if i < len(words) - 1:  # Don't add space after last word
+                                text_object.textOut(' ' * int(space_width / c.stringWidth(' ', font_name, font_size)))
+                    else:
+                        text_object.textLine(text)
+                    
                     c.drawText(text_object)
                     
                     current_paragraph += 1
