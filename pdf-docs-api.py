@@ -865,7 +865,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     line_width = line_words[-1]['x1'] - line_words[0]['x0']
                     
                     # Get text alignment from original
-                    text_align = 'left'  # Default
+                    text_align = 'left'
                     if len(line_words) > 1:
                         # Check if text is centered
                         page_center = page_width / 2
@@ -898,8 +898,21 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                                     text_align = 'justify'
                     
                     text = proofread_paragraphs[current_paragraph]
+                    
+                    # Set text rendering mode to fill (0) for clean text
+                    c._doc.Catalog.OpenAction = None
                     c.setFont(font_name, font_size)
                     c.setFillColorRGB(r, g, b)
+                    
+                    # Clean the text of any special characters that might cause rendering issues
+                    text = text.replace('\u2022', '•')  # Replace bullet points
+                    text = text.replace('\u2013', '-')  # Replace en dash
+                    text = text.replace('\u2014', '--')  # Replace em dash
+                    text = text.replace('\u2018', "'")  # Replace left single quote
+                    text = text.replace('\u2019', "'")  # Replace right single quote
+                    text = text.replace('\u201c', '"')  # Replace left double quote
+                    text = text.replace('\u201d', '"')  # Replace right double quote
+                    
                     if text_align == 'center':
                         c.drawCentredString(x_pos + line_width/2, y_pos_adjusted, text)
                     elif text_align == 'right':
