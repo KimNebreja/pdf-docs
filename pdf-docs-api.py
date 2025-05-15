@@ -480,7 +480,7 @@ def get_font_name(font_name):
     font_name = re.sub(r'^[a-z]+[_-]', '', font_name)
     font_name = re.sub(r'[_-][a-z]+$', '', font_name)
     
-    # Map common font names with style detection
+    # Map common font names
     font_map = {
         "helv": "Helvetica",
         "helvetica": "Helvetica",
@@ -529,47 +529,25 @@ def get_font_name(font_name):
         "andale": "Courier"
     }
     
-    # Check for style indicators in the original font name
-    is_bold = 'bold' in font_name or 'heavy' in font_name or 'black' in font_name
-    is_italic = 'italic' in font_name or 'oblique' in font_name or 'slant' in font_name
-    
     # Check if font name is in our mapping
     if font_name in font_map:
-        base_font = font_map[font_name]
-    else:
-        # Check if font name contains any of our mapped names
-        for key in font_map:
-            if key in font_name:
-                base_font = font_map[key]
-                break
-        else:
-            # Default to Helvetica if no match
-            base_font = "Helvetica"
+        return font_map[font_name]
     
-    # Apply styles to base font
-    if is_bold and is_italic:
-        if base_font == "Helvetica":
-            return "Helvetica-BoldOblique"
-        elif base_font == "Times-Roman":
-            return "Times-BoldItalic"
-        elif base_font == "Courier":
-            return "Courier-BoldOblique"
-    elif is_bold:
-        if base_font == "Helvetica":
-            return "Helvetica-Bold"
-        elif base_font == "Times-Roman":
-            return "Times-Bold"
-        elif base_font == "Courier":
-            return "Courier-Bold"
-    elif is_italic:
-        if base_font == "Helvetica":
-            return "Helvetica-Oblique"
-        elif base_font == "Times-Roman":
-            return "Times-Italic"
-        elif base_font == "Courier":
-            return "Courier-Oblique"
+    # Check if font name contains any of our mapped names
+    for key in font_map:
+        if key in font_name:
+            return font_map[key]
     
-    return base_font
+    # Check for bold/italic variants
+    if "bold" in font_name and "italic" in font_name:
+        return "Times-BoldItalic"
+    elif "bold" in font_name:
+        return "Helvetica-Bold"
+    elif "italic" in font_name or "oblique" in font_name:
+        return "Times-Italic"
+    
+    # Default to Helvetica if no match
+    return "Helvetica"
 
 def register_fonts():
     """Registers common fonts with ReportLab."""
@@ -786,7 +764,8 @@ def extract_text_with_formatting(pdf_path):
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
-    Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
+    Saves proofread text to a new PDF file using pdfplumber for text extraction
+    and reportlab for PDF generation with advanced positioning and color handling.
     """
     try:
         # Register fonts
@@ -801,13 +780,22 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             page_width = first_page.width
             page_height = first_page.height
             
-            # Create a new PDF with reportlab using exact dimensions
+            # Create a new PDF with reportlab
             c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
             
             # Extract text with formatting
             formatted_text = extract_text_with_formatting(original_pdf_path)
             
-            # Split text into paragraphs while preserving line breaks
+            # Detect paragraphs
+            paragraphs = detect_paragraphs(formatted_text)
+            
+            # Detect lists
+            lists = detect_lists(formatted_text)
+            
+            # Detect headers and footers
+            header_footer_info = detect_headers_footers(original_pdf_path)
+            
+            # Split text into paragraphs for proofreading
             if isinstance(text, str):
                 proofread_paragraphs = text.split('\n')
             else:
@@ -820,210 +808,161 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             for page_num, (page, mupdf_page) in enumerate(zip(pdf.pages, doc)):
                 logger.info(f"Processing page {page_num + 1}")
                 
-                # Get words with formatting for this page
-                words = page.extract_words(
-                    keep_blank_chars=True,
-                    x_tolerance=3,
-                    y_tolerance=3,
-                    extra_attrs=['fontname', 'size', 'upright', 'top', 'bottom', 'x0', 'x1', 'width']
-                )
+                # Get lines for this page
+                page_lines = [line for line in formatted_text if line['page'] == page_num]
                 
-                # Group words by line based on vertical position
-                lines = defaultdict(list)
-                for word in words:
-                    y_pos = round(word['top'], 1)
-                    lines[y_pos].append(word)
+                # Get paragraphs for this page
+                page_paragraphs = [p for p in paragraphs if p['lines'][0]['page'] == page_num]
                 
-                # Sort lines by vertical position
-                sorted_lines = sorted(lines.items(), key=lambda x: x[0])
+                # Get lists for this page
+                page_lists = [l for l in lists if l['items'][0]['line_index'] < len(page_lines) and 
+                             page_lines[l['items'][0]['line_index']]['page'] == page_num]
                 
-                # Process each line
-                for idx, (y_pos, line_words) in enumerate(sorted_lines):
+                # Process each paragraph
+                for paragraph in page_paragraphs:
                     if current_paragraph >= len(proofread_paragraphs):
                         break
-                    
-                    # Sort words in line by horizontal position
-                    line_words.sort(key=lambda x: x['x0'])
-                    
-                    # Get formatting from first word in line
-                    first_word = line_words[0]
-                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                    font_size = float(first_word.get('size', 11))
-                    
-                    # Get text color
-                    bbox = fitz.Rect(first_word['x0'], first_word['top'], 
-                                   first_word['x0'] + first_word['width'], 
-                                   first_word['bottom'])
-                    color = get_text_color(mupdf_page, bbox)
-                    r, g, b = normalize_color(color) if color else (0, 0, 0)
-                    
-                    # Calculate text position
-                    x_pos = first_word['x0']
-                    y_pos_adjusted = page_height - first_word['top'] - font_size/3
-                    
-                    # Calculate line width for alignment
-                    line_width = line_words[-1]['x1'] - line_words[0]['x0']
-                    
-                    # Get text alignment from original
-                    text_align = 'left'
-                    if len(line_words) > 1:
-                        # Check if text is centered
-                        page_center = page_width / 2
-                        line_center = (line_words[0]['x0'] + line_words[-1]['x1']) / 2
-                        if abs(page_center - line_center) < 20:  # 20pt tolerance
-                            text_align = 'center'
-                        # Check if text is right-aligned
-                        elif line_words[0]['x0'] > page_width * 0.7:
-                            text_align = 'right'
-                        # Check if text is justified
+                        
+                    # Check if this is a table
+                    if paragraph['lines'][0].get('is_table', False):
+                        # Get table data
+                        table_data = paragraph['lines'][0].get('table_data', [])
+                        
+                        # Get table position
+                        first_line = paragraph['lines'][0]
+                        last_line = paragraph['lines'][-1]
+                        
+                        x0 = first_line['words'][0]['x0']
+                        y0 = first_line['y_pos']
+                        x1 = last_line['words'][-1]['x0'] + last_line['words'][-1]['width']
+                        y1 = last_line['y_pos'] + last_line['words'][-1]['height']
+                        
+                        # Get font and color
+                        font = get_font_name(first_line['words'][0].get('fontname', 'Helvetica'))
+                        fontsize = float(first_line['words'][0].get('size', 11))
+                        
+                        # Get color
+                        bbox = fitz.Rect(x0, y0, x1, y1)
+                        color = get_text_color(mupdf_page, bbox)
+                        if color:
+                            r, g, b = normalize_color(color)
+                            fill_color = Color(r, g, b)
                         else:
-                            # Calculate average word spacing
-                            total_spacing = 0
-                            word_count = len(line_words)
-                            if word_count > 1:
-                                for i in range(word_count - 1):
-                                    spacing = line_words[i + 1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
-                                    total_spacing += spacing
-                                avg_spacing = total_spacing / (word_count - 1)
-                                
-                                # Check if spacing is relatively uniform (justified text)
-                                is_uniform = True
-                                for i in range(word_count - 1):
-                                    spacing = line_words[i + 1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
-                                    if abs(spacing - avg_spacing) > avg_spacing * 0.2:  # 20% tolerance
-                                        is_uniform = False
-                                        break
-                                
-                                if is_uniform and word_count > 2:  # Need at least 3 words for justified text
-                                    text_align = 'justify'
-                    
-                    text = proofread_paragraphs[current_paragraph]
-                    
-                    # Set text rendering mode to fill (0) for clean text
-                    c._doc.Catalog.OpenAction = None
-                    c.setFont(font_name, font_size)
-                    c.setFillColorRGB(r, g, b)
-                    
-                    # Clean and normalize text
-                    def clean_text(t):
-                        # Replace problematic characters with their ASCII equivalents
-                        replacements = {
-                            '\u2022': '•',  # Bullet point
-                            '\u2013': '-',  # En dash
-                            '\u2014': '--',  # Em dash
-                            '\u2018': "'",  # Left single quote
-                            '\u2019': "'",  # Right single quote
-                            '\u201c': '"',  # Left double quote
-                            '\u201d': '"',  # Right double quote
-                            '\u00a0': ' ',  # Non-breaking space
-                            '\u2026': '...',  # Ellipsis
-                            '\u2012': '-',  # Figure dash
-                            '\u2015': '--',  # Horizontal bar
-                            '\u2017': '_',  # Double low line
-                            '\u201a': ',',  # Single low-9 quote
-                            '\u201b': "'",  # Single high-reversed-9 quote
-                            '\u201e': '"',  # Double low-9 quote
-                            '\u201f': '"',  # Double high-reversed-9 quote
-                            '\u2032': "'",  # Prime
-                            '\u2033': '"',  # Double prime
-                            '\u2034': '"',  # Triple prime
-                            '\u2035': "'",  # Reversed prime
-                            '\u2036': '"',  # Reversed double prime
-                            '\u2037': '"',  # Reversed triple prime
-                            '\u2038': '^',  # Caret
-                            '\u2039': '<',  # Single left-pointing angle quote
-                            '\u203a': '>',  # Single right-pointing angle quote
-                            '\u203c': '!!',  # Double exclamation mark
-                            '\u203d': '?!',  # Interrobang
-                            '\u203e': '-',  # Overline
-                            '\u2044': '/',  # Fraction slash
-                            '\u2045': '[',  # Left square bracket with quill
-                            '\u2046': ']',  # Right square bracket with quill
-                            '\u2047': '??',  # Double question mark
-                            '\u2048': '?!',  # Question exclamation mark
-                            '\u2049': '!?',  # Exclamation question mark
-                            '\u204a': '†',  # Latin cross
-                            '\u204b': '‡',  # Double dagger
-                            '\u204c': '‡',  # Black leftwards bullet
-                            '\u204d': '‡',  # Black rightwards bullet
-                            '\u204e': '*',  # Low asterisk
-                            '\u204f': ';',  # Reversed semicolon
-                            '\u2050': '%',  # Close up
-                            '\u2051': '**',  # Two asterisks aligned vertically
-                            '\u2052': '%',  # Commercial minus sign
-                            '\u2053': '~',  # Swung dash
-                            '\u2054': '^',  # Inverted undertie
-                            '\u2055': '*',  # Flower punctuation mark
-                            '\u2056': '...',  # Three dot punctuation
-                            '\u2057': '"',  # Quadruple prime
-                            '\u2058': '....',  # Four dot punctuation
-                            '\u2059': '.....',  # Five dot punctuation
-                            '\u205a': '......',  # Six dot punctuation
-                            '\u205b': '.......',  # Seven dot punctuation
-                            '\u205c': '........',  # Eight dot punctuation
-                            '\u205d': '.........',  # Nine dot punctuation
-                            '\u205e': '..........',  # Ten dot punctuation
-                            '\u205f': ' ',  # Medium mathematical space
-                        }
+                            fill_color = Color(0, 0, 0)  # Default to black
+                            
+                        # Create table
+                        create_table(c, table_data, x0, page_height - y1, x1 - x0, y1 - y0, 
+                                    font, fontsize, fill_color)
+                                    
+                        # Update current paragraph
+                        current_paragraph += 1
+                        continue
                         
-                        # Apply replacements
-                        for old, new in replacements.items():
-                            t = t.replace(old, new)
+                    # Check if this is a list
+                    is_list = False
+                    list_type = None
+                    for list_obj in page_lists:
+                        if paragraph['lines'][0] in [page_lines[item['line_index']] for item in list_obj['items']]:
+                            is_list = True
+                            list_type = list_obj['type']
+                            break
+                            
+                    # Process each line in the paragraph
+                    for line in paragraph['lines']:
+                        if current_paragraph >= len(proofread_paragraphs):
+                            break
+                            
+                        # Save canvas state
+                        c.saveState()
                         
-                        # Remove any remaining control characters
-                        t = ''.join(char for char in t if ord(char) >= 32 or char in '\n\r\t')
+                        # Get line properties
+                        y_pos = line['y_pos']
                         
-                        return t
-                    
-                    # Clean the text
-                    text = clean_text(text)
-                    
-                    if text_align == 'center':
-                        c.drawCentredString(x_pos + line_width/2, y_pos_adjusted, text)
-                    elif text_align == 'right':
-                        c.drawRightString(x_pos + line_width, y_pos_adjusted, text)
-                    elif text_align == 'justify':
-                        # For justified text, we need to calculate word spacing
-                        words = text.split()
-                        if len(words) > 1:
-                            # Calculate total width of text
-                            total_text_width = 0
-                            for word in words:
-                                total_text_width += c.stringWidth(word, font_name, font_size)
-                            # Calculate space between words
-                            space_width = (line_width - total_text_width) / (len(words) - 1)
-                            # Draw each word with calculated spacing
-                            current_x = x_pos
-                            for i, word in enumerate(words):
-                                c.drawString(current_x, y_pos_adjusted, word)
-                                if i < len(words) - 1:  # Don't add space after last word
-                                    current_x += c.stringWidth(word, font_name, font_size) + space_width
+                        # Process each word in the line
+                        x_pos = line['words'][0]['x0']  # Start with the first word's x position
+                        
+                        # Get the first word's properties for the line
+                        first_word = line['words'][0]
+                        font = get_font_name(first_word.get('fontname', 'Helvetica'))
+                        fontsize = float(first_word.get('size', 11))
+                        
+                        # Get color from original PDF
+                        bbox = fitz.Rect(first_word['x0'], first_word['top'], 
+                                        first_word['x0'] + first_word['width'], 
+                                        first_word['top'] + first_word['height'])
+                        color = get_text_color(mupdf_page, bbox)
+                        if color:
+                            r, g, b = normalize_color(color)
+                            fill_color = Color(r, g, b)
                         else:
-                            c.drawString(x_pos, y_pos_adjusted, text)  # Single word, no justification needed
-                    else:
-                        # Left align (default)
-                        c.drawString(x_pos, y_pos_adjusted, text)
-                    
-                    # Add line spacing based on original
-                    if current_paragraph < len(proofread_paragraphs) - 1 and idx + 1 < len(sorted_lines):
-                        next_line = sorted_lines[idx + 1][1][0]
-                        line_spacing = next_line['top'] - first_word['bottom']
-                        if line_spacing > 0:
-                            c.translate(0, -line_spacing)
-                    
-                    current_paragraph += 1
+                            fill_color = Color(0, 0, 0)  # Default to black
+                        
+                        # Calculate text metrics for better positioning
+                        c.setFont(font, fontsize)
+                        text_width = c.stringWidth(proofread_paragraphs[current_paragraph], font, fontsize)
+                        text_height = fontsize * 1.2  # Approximate height
+                        
+                        # Calculate baseline position for better text alignment
+                        baseline_offset = fontsize * 0.2  # Approximate baseline offset
+                        
+                        # Calculate leading (line spacing) based on font size
+                        leading = fontsize * 1.5  # Standard leading is 1.5x font size
+                        
+                        # Adjust position for better alignment
+                        y_pos_adjusted = page_height - y_pos - text_height/2 + baseline_offset
+                        
+                        # Handle lists
+                        if is_list:
+                            # Add bullet or number
+                            if list_type == 'bullet':
+                                bullet = '•'
+                                bullet_width = c.stringWidth(bullet, font, fontsize)
+                                c.setFillColor(fill_color)
+                                c.drawString(x_pos - bullet_width - 10, y_pos_adjusted, bullet)
+                                x_pos += 10  # Indent the text
+                            elif list_type == 'numbered':
+                                # Find the list item number
+                                for list_obj in page_lists:
+                                    for i, item in enumerate(list_obj['items']):
+                                        if line == page_lines[item['line_index']]:
+                                            number = f"{i+1}."
+                                            number_width = c.stringWidth(number, font, fontsize)
+                                            c.setFillColor(fill_color)
+                                            c.drawString(x_pos - number_width - 10, y_pos_adjusted, number)
+                                            x_pos += 10  # Indent the text
+                                            break
+                        
+                        # Draw text with improved positioning
+                        text_object = c.beginText(x_pos, y_pos_adjusted)
+                        text_object.setFont(font, fontsize)
+                        text_object.setFillColor(fill_color)
+                        text_object.textLine(proofread_paragraphs[current_paragraph])
+                        c.drawText(text_object)
+                        current_paragraph += 1
+                        
+                        # Restore canvas state
+                        c.restoreState()
                 
-                # Add page numbers if present in original
-                if page.page_number is not None:
-                    c.setFont('Helvetica', 10)
-                    c.drawString(page_width/2, 30, str(page.page_number))
+                # Add headers and footers
+                for header in header_footer_info['headers']:
+                    if header['page'] == page_num:
+                        c.setFont('Helvetica', 10)
+                        c.setFillColor(Color(0.5, 0.5, 0.5))  # Gray color for headers
+                        c.drawString(50, page_height - 30, header['text'])
+                        
+                for footer in header_footer_info['footers']:
+                    if footer['page'] == page_num:
+                        c.setFont('Helvetica', 10)
+                        c.setFillColor(Color(0.5, 0.5, 0.5))  # Gray color for footers
+                        c.drawString(50, 30, footer['text'])
                 
+                # Move to next page
                 c.showPage()
             
             # Save the PDF
             c.save()
             doc.close()
-            logger.info("PDF saved successfully with original formatting")
+            logger.info("PDF saved successfully")
             
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
@@ -1032,113 +971,34 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
 @app.route('/convert', methods=['POST'])
 def convert_and_proofread():
     """Handles PDF proofreading."""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    filename = secure_filename(file.filename)
+    pdf_path = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(pdf_path)
+
     try:
-        logger.info("Received file upload request")
-        
-        if 'file' not in request.files and 'text' not in request.form:
-            logger.error("No file or text provided in request")
-            return jsonify({"error": "No file or text provided"}), 400
-
-        # Handle text and suggestions if provided directly
-        if 'text' in request.form:
-            logger.info("Processing text-based request")
-            proofread_text_content = request.form['text']
-            original_filename = request.form.get('filename', 'document.pdf')
-            sanitized_filename = secure_filename(original_filename)
-            
-            # Store the original file path in a session-like dictionary
-            original_pdf_path = os.path.join(UPLOAD_FOLDER, sanitized_filename)
-            
-            # Ensure the original file exists
-            if not os.path.exists(original_pdf_path):
-                # Try to find the file with "proofread_" prefix removed
-                base_filename = sanitized_filename.replace("proofread_", "", 1)
-                original_pdf_path = os.path.join(UPLOAD_FOLDER, base_filename)
-                
-                if not os.path.exists(original_pdf_path):
-                    logger.error(f"Original file not found: {sanitized_filename}")
-                    return jsonify({"error": f"Original file not found: {sanitized_filename}"}), 404
-            
-            # Get selected suggestions
-            selected_suggestions = {}
-            if 'selected_suggestions' in request.form:
-                try:
-                    selected_suggestions = dict(json.loads(request.form['selected_suggestions']))
-                    # Apply selected suggestions
-                    for original_word, selected_word in selected_suggestions.items():
-                        proofread_text_content = proofread_text_content.replace(original_word, selected_word)
-                except Exception as e:
-                    logger.warning(f"Failed to parse selected suggestions: {str(e)}")
-
-            # Generate PDF with the updated text
-            output_filename = "proofread_" + sanitized_filename.replace("proofread_", "", 1)  # Avoid duplicate prefix
-            output_path = os.path.join(OUTPUT_FOLDER, output_filename)
-            
-            # Use the original PDF as a template for formatting
-            save_text_to_pdf(proofread_text_content, output_path, original_pdf_path)
-            
-            return jsonify({
-                "download_url": "/download/" + output_filename,
-                "file_name": sanitized_filename
-            })
-
-        # Handle file upload case
-        file = request.files['file']
-        if file.filename == '':
-            logger.error("No file selected in upload")
-            return jsonify({"error": "No selected file"}), 400
-
-        filename = secure_filename(file.filename)
-        pdf_path = os.path.join(UPLOAD_FOLDER, filename)
-        
-        # Create UPLOAD_FOLDER if it doesn't exist
-        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-        
-        # Save the uploaded file
-        try:
-            file.save(pdf_path)
-            logger.info(f"Successfully saved uploaded file: {filename}")
-        except Exception as e:
-            logger.error(f"Error saving uploaded file: {str(e)}")
-            return jsonify({"error": f"Error saving file: {str(e)}"}), 500
-
-        # Extract text from PDF
-        try:
-            extracted_text = extract_text_from_pdf(pdf_path)
-            logger.info("Successfully extracted text from PDF")
-        except Exception as e:
-            logger.error(f"Error extracting text from PDF: {str(e)}")
-            return jsonify({"error": f"Error extracting text: {str(e)}"}), 500
+        # Extract text directly from PDF
+        extracted_text = extract_text_from_pdf(pdf_path)
 
         # Proofread the text
-        try:
-            proofread_text_content, grammar_errors = proofread_text(extracted_text)
-            logger.info("Successfully proofread text")
-        except Exception as e:
-            logger.error(f"Error proofreading text: {str(e)}")
-            return jsonify({"error": f"Error proofreading text: {str(e)}"}), 500
+        proofread_text_content, grammar_errors = proofread_text(extracted_text)
 
         # Save proofread text back to PDF
         proofread_pdf_filename = "proofread_" + filename
         proofread_pdf_path = os.path.join(OUTPUT_FOLDER, proofread_pdf_filename)
-        
-        # Create OUTPUT_FOLDER if it doesn't exist
-        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-        
-        try:
-            # Save the proofread PDF using the original as template
-            save_text_to_pdf(proofread_text_content, proofread_pdf_path, pdf_path)
-            logger.info("Successfully saved proofread PDF")
-        except Exception as e:
-            logger.error(f"Error saving proofread PDF: {str(e)}")
-            return jsonify({"error": f"Error saving proofread PDF: {str(e)}"}), 500
+        save_text_to_pdf(proofread_text_content, proofread_pdf_path, pdf_path)
 
         return jsonify({
             "original_text": extracted_text,
             "proofread_text": proofread_text_content,
-            "grammar_errors": grammar_errors,
-            "download_url": "/download/" + proofread_pdf_filename,
-            "file_name": filename  # Always return sanitized filename
+            "grammar_errors": grammar_errors,  # Provide detailed grammar corrections
+            "download_url": "/download/" + proofread_pdf_filename
         })
 
     except Exception as e:
