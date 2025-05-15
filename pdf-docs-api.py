@@ -900,12 +900,14 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     text = proofread_paragraphs[current_paragraph]
                     c.setFont(font_name, font_size)
                     c.setFillColorRGB(r, g, b)
+                    
+                    # Handle different text alignments
                     if text_align == 'center':
                         c.drawCentredString(x_pos + line_width/2, y_pos_adjusted, text)
                     elif text_align == 'right':
                         c.drawRightString(x_pos + line_width, y_pos_adjusted, text)
                     elif text_align == 'justify':
-                        # For justified text, we need to calculate word spacing
+                        # For justified text, calculate word spacing
                         words = text.split()
                         if len(words) > 1:
                             # Calculate total width of text
@@ -940,6 +942,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     c.setFont('Helvetica', 10)
                     c.drawString(page_width/2, 30, str(page.page_number))
                 
+                # Save the current page and start a new one
                 c.showPage()
             
             # Save the PDF
