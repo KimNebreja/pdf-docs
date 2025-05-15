@@ -861,63 +861,67 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
                     
-                    # Calculate text position
+                    # Calculate text position and width
                     x_pos = first_word['x0']
                     y_pos_adjusted = page_height - first_word['top'] - font_size/3
-                    
-                    # Calculate line width for alignment
                     line_width = line_words[-1]['x1'] - line_words[0]['x0']
                     
-                    # Get text alignment from original
+                    # Enhanced text alignment detection
                     text_align = 'left'  # Default
                     if len(line_words) > 1:
-                        # Check if text is centered
+                        # Calculate line boundaries
+                        line_start = line_words[0]['x0']
+                        line_end = line_words[-1]['x1']
+                        line_center = (line_start + line_end) / 2
                         page_center = page_width / 2
-                        line_center = (line_words[0]['x0'] + line_words[-1]['x1']) / 2
+                        
+                        # Calculate margins
+                        left_margin = line_start
+                        right_margin = page_width - line_end
+                        
+                        # Check for centered text
                         if abs(page_center - line_center) < 20:  # 20pt tolerance
                             text_align = 'center'
-                        # Check if text is right-aligned
-                        elif line_words[0]['x0'] > page_width * 0.7:
+                        # Check for right-aligned text
+                        elif right_margin < left_margin * 0.5:  # Right margin is significantly smaller
                             text_align = 'right'
-                        # Check if text is justified
+                        # Check for justified text
                         else:
-                            # Calculate average word spacing
-                            total_spacing = 0
-                            word_count = len(line_words)
-                            if word_count > 1:
-                                for i in range(word_count - 1):
-                                    spacing = line_words[i + 1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
-                                    total_spacing += spacing
-                                avg_spacing = total_spacing / (word_count - 1)
+                            # Calculate word spacing statistics
+                            spacings = []
+                            for i in range(len(line_words) - 1):
+                                spacing = line_words[i + 1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
+                                spacings.append(spacing)
+                            
+                            if spacings:
+                                avg_spacing = sum(spacings) / len(spacings)
+                                std_dev = (sum((s - avg_spacing) ** 2 for s in spacings) / len(spacings)) ** 0.5
                                 
-                                # Check if spacing is relatively uniform (justified text)
-                                is_uniform = True
-                                for i in range(word_count - 1):
-                                    spacing = line_words[i + 1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
-                                    if abs(spacing - avg_spacing) > avg_spacing * 0.2:  # 20% tolerance
-                                        is_uniform = False
-                                        break
-                                
-                                if is_uniform and word_count > 2:  # Need at least 3 words for justified text
+                                # Text is justified if spacing is relatively uniform
+                                if std_dev < avg_spacing * 0.2 and len(line_words) > 2:
                                     text_align = 'justify'
                     
                     text = proofread_paragraphs[current_paragraph]
                     c.setFont(font_name, font_size)
                     c.setFillColorRGB(r, g, b)
                     
-                    # Handle different text alignments
+                    # Enhanced text alignment handling
                     if text_align == 'center':
-                        c.drawCentredString(x_pos + line_width/2, y_pos_adjusted, text)
+                        # Center text relative to the line width
+                        text_width = c.stringWidth(text, font_name, font_size)
+                        center_x = x_pos + (line_width - text_width) / 2
+                        c.drawString(center_x, y_pos_adjusted, text)
                     elif text_align == 'right':
-                        c.drawRightString(x_pos + line_width, y_pos_adjusted, text)
+                        # Right align text
+                        text_width = c.stringWidth(text, font_name, font_size)
+                        right_x = x_pos + line_width - text_width
+                        c.drawString(right_x, y_pos_adjusted, text)
                     elif text_align == 'justify':
-                        # For justified text, calculate word spacing
+                        # Enhanced justified text handling
                         words = text.split()
                         if len(words) > 1:
                             # Calculate total width of text
-                            total_text_width = 0
-                            for word in words:
-                                total_text_width += c.stringWidth(word, font_name, font_size)
+                            total_text_width = sum(c.stringWidth(word, font_name, font_size) for word in words)
                             # Calculate space between words
                             space_width = (line_width - total_text_width) / (len(words) - 1)
                             # Draw each word with calculated spacing
