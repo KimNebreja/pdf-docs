@@ -785,66 +785,73 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             
             # Extract text with formatting
             formatted_lines = extract_text_with_formatting(original_pdf_path)
-            
-            # Split proofread text into words (flattened)
+            # Detect paragraphs
+            paragraphs = detect_paragraphs(formatted_lines)
+            # Split proofread text into paragraphs
             if isinstance(text, str):
-                proofread_words = text.split()
+                proofread_paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
             else:
-                proofread_words = ' '.join(text).split()
-            
-            # Flatten original lines into words for diff
-            original_words = []
-            line_word_indices = []  # (start_idx, end_idx) for each line
-            idx = 0
-            for line in formatted_lines:
-                words = line['text'].split()
-                start = idx
-                idx += len(words)
-                end = idx
-                line_word_indices.append((start, end))
-                original_words.extend(words)
-            
-            # Use difflib to align proofread words to original words
-            sm = difflib.SequenceMatcher(None, original_words, proofread_words)
-            corrected_words = list(original_words)  # start with original
-            opcodes = sm.get_opcodes()
-            for tag, i1, i2, j1, j2 in opcodes:
-                if tag in ('replace', 'insert'):
-                    corrected_words[i1:i2] = proofread_words[j1:j2]
-                elif tag == 'delete':
-                    corrected_words[i1:i2] = []
-            
-            # Group corrected words back into lines
-            corrected_lines = []
-            for start, end in line_word_indices:
-                corrected_lines.append(' '.join(corrected_words[start:end]))
-            
+                proofread_paragraphs = [p.strip() for p in text if p.strip()]
             # Group lines by page number
             lines_by_page = defaultdict(list)
             for idx, line in enumerate(formatted_lines):
                 lines_by_page[line.get('page', 0)].append((line, idx))
-            
             num_pages = len(pdf.pages)
+            para_idx = 0
             for page_num in range(num_pages):
                 page_obj = pdf.pages[page_num]
                 page_width = page_obj.width
                 page_height = page_obj.height
                 c.setPageSize((page_width, page_height))
+                # Draw paragraphs for this page
+                for paragraph in paragraphs:
+                    if para_idx >= len(proofread_paragraphs):
+                        break
+                    # Only draw paragraphs that belong to this page
+                    if paragraph['lines'][0]['page'] != page_num:
+                        continue
+                    # Get bounding box for the paragraph
+                    first_line = paragraph['lines'][0]
+                    last_line = paragraph['lines'][-1]
+                    x0 = min(w['x0'] for w in first_line['words'])
+                    y0 = min(l['y_pos'] for l in paragraph['lines'])
+                    x1 = max(w['x0'] + w['width'] for w in last_line['words'])
+                    y1 = max(l['y_pos'] for l in paragraph['lines']) + last_line['words'][0]['height']
+                    width = x1 - x0
+                    height = y1 - y0
+                    # Get font and size from first word
+                    font_name = get_font_name(first_line['words'][0].get('fontname', 'Helvetica'))
+                    font_size = float(first_line['words'][0].get('size', 11))
+                    # Define justified style
+                    style = ParagraphStyle(
+                        name='Justified',
+                        fontName=font_name,
+                        fontSize=font_size,
+                        leading=font_size * 1.2,
+                        alignment=4,  # Justify
+                    )
+                    # Create Frame and Paragraph
+                    frame = Frame(x0, page_height - y1, width, height, showBoundary=0)
+                    para = Paragraph(proofread_paragraphs[para_idx], style)
+                    frame.addFromList([para], c)
+                    para_idx += 1
+                # Draw other elements (tables, headers, footers) as before
                 for line, idx in lines_by_page.get(page_num, []):
                     if not line['words']:
                         continue
-                    first_word = line['words'][0]
-                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                    font_size = float(first_word.get('size', 11))
-                    x_pos = first_word['x0']
-                    y_pos = page_height - first_word['top'] - font_size/3
-                    mupdf_page = doc[page_num]
-                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
-                    color = get_text_color(mupdf_page, bbox)
-                    r, g, b = normalize_color(color) if color else (0, 0, 0)
-                    c.setFont(font_name, font_size)
-                    c.setFillColorRGB(r, g, b)
-                    c.drawString(x_pos, y_pos, corrected_lines[idx])
+                    if line.get('is_table') or line.get('is_header') or line.get('is_footer'):
+                        first_word = line['words'][0]
+                        font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                        font_size = float(first_word.get('size', 11))
+                        x_pos = first_word['x0']
+                        y_pos = page_height - first_word['top'] - font_size/3
+                        mupdf_page = doc[page_num]
+                        bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                        color = get_text_color(mupdf_page, bbox)
+                        r, g, b = normalize_color(color) if color else (0, 0, 0)
+                        c.setFont(font_name, font_size)
+                        c.setFillColorRGB(r, g, b)
+                        c.drawString(x_pos, y_pos, line['text'])
                 c.setFont('Helvetica', 10)
                 c.drawString(page_width/2, 30, str(page_num + 1))
                 if page_num < num_pages - 1:
