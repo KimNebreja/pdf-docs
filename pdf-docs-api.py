@@ -830,6 +830,8 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 proofread_paragraphs = sanitized_text.split('\n')
             else:
                 proofread_paragraphs = [sanitize_text_remove_all_symbols(t) for t in text]
+            # Remove any paragraph that is just a black square or similar symbol (or empty after sanitization)
+            proofread_paragraphs = [p for p in proofread_paragraphs if p.strip() and not re.fullmatch(r'[■▪□◆●•◦◾◼◻◊]', p.strip())]
             
             # Track current paragraph and page
             current_paragraph = 0
