@@ -829,6 +829,9 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             current_paragraph = 0
             current_page = 0
             
+            # Pattern for unwanted symbols
+            unwanted_pattern = re.compile(r'^[■▪□◆●•◦◾◼◻◊]$')
+            
             # Process each page
             for page_num, (page, mupdf_page) in enumerate(zip(pdf.pages, doc)):
                 logger.info(f"Processing page {page_num + 1}")
@@ -857,6 +860,12 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 for idx, (y_pos, line_words) in enumerate(sorted_lines):
                     if current_paragraph >= len(proofread_paragraphs):
                         break
+                    
+                    # Filter out unwanted symbols from line_words
+                    line_words = [w for w in line_words if not unwanted_pattern.match(w['text'])]
+                    if not line_words:
+                        current_paragraph += 1
+                        continue
                     
                     # Sort words in line by horizontal position
                     line_words.sort(key=lambda x: x['x0'])
