@@ -18,6 +18,7 @@ import re
 import json
 import numpy as np
 from collections import defaultdict
+import difflib
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -785,11 +786,38 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             # Extract text with formatting
             formatted_lines = extract_text_with_formatting(original_pdf_path)
             
-            # Split proofread text into lines (to match original line count)
+            # Split proofread text into words (flattened)
             if isinstance(text, str):
-                proofread_lines = text.split('\n')
+                proofread_words = text.split()
             else:
-                proofread_lines = text
+                proofread_words = ' '.join(text).split()
+            
+            # Flatten original lines into words for diff
+            original_words = []
+            line_word_indices = []  # (start_idx, end_idx) for each line
+            idx = 0
+            for line in formatted_lines:
+                words = line['text'].split()
+                start = idx
+                idx += len(words)
+                end = idx
+                line_word_indices.append((start, end))
+                original_words.extend(words)
+            
+            # Use difflib to align proofread words to original words
+            sm = difflib.SequenceMatcher(None, original_words, proofread_words)
+            corrected_words = list(original_words)  # start with original
+            opcodes = sm.get_opcodes()
+            for tag, i1, i2, j1, j2 in opcodes:
+                if tag in ('replace', 'insert'):
+                    corrected_words[i1:i2] = proofread_words[j1:j2]
+                elif tag == 'delete':
+                    corrected_words[i1:i2] = []
+            
+            # Group corrected words back into lines
+            corrected_lines = []
+            for start, end in line_word_indices:
+                corrected_lines.append(' '.join(corrected_words[start:end]))
             
             # Group lines by page number
             lines_by_page = defaultdict(list)
@@ -798,15 +826,11 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             
             num_pages = len(pdf.pages)
             for page_num in range(num_pages):
-                # Set up page dimensions (in case they differ per page)
                 page_obj = pdf.pages[page_num]
                 page_width = page_obj.width
                 page_height = page_obj.height
                 c.setPageSize((page_width, page_height))
-                
                 for line, idx in lines_by_page.get(page_num, []):
-                    if idx >= len(proofread_lines):
-                        break
                     if not line['words']:
                         continue
                     first_word = line['words'][0]
@@ -820,28 +844,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
                     c.setFont(font_name, font_size)
                     c.setFillColorRGB(r, g, b)
-                    if line.get('is_table') or line.get('is_header') or line.get('is_footer'):
-                        c.drawString(x_pos, y_pos, proofread_lines[idx])
-                    else:
-                        words = proofread_lines[idx].split()
-                        if len(words) > 1:
-                            total_text_width = sum(c.stringWidth(word, font_name, font_size) for word in words)
-                            orig_line_width = (line['words'][-1]['x0'] + line['words'][-1]['width']) - line['words'][0]['x0']
-                            if orig_line_width > total_text_width:
-                                space_width = (orig_line_width - total_text_width) / (len(words) - 1)
-                            else:
-                                space_width = c.stringWidth(' ', font_name, font_size)
-                            text_obj = c.beginText(x_pos, y_pos)
-                            text_obj.setFont(font_name, font_size)
-                            text_obj.setFillColorRGB(r, g, b)
-                            for i, word in enumerate(words):
-                                text_obj.textOut(word)
-                                if i < len(words) - 1:
-                                    text_obj.moveCursor(space_width, 0)
-                            c.drawText(text_obj)
-                        else:
-                            c.drawString(x_pos, y_pos, proofread_lines[idx])
-                # Add page numbers if present in original
+                    c.drawString(x_pos, y_pos, corrected_lines[idx])
                 c.setFont('Helvetica', 10)
                 c.drawString(page_width/2, 30, str(page_num + 1))
                 if page_num < num_pages - 1:
