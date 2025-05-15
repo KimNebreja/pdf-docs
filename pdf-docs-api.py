@@ -790,6 +790,10 @@ def extract_text_with_formatting(pdf_path):
         logger.error(f"Error extracting text with formatting: {str(e)}")
         raise
 
+def sanitize_text(text):
+    """Replace black squares and similar symbols with a bullet or remove them."""
+    return re.sub(r'[■▪□◆]', '', text)
+
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
@@ -905,7 +909,8 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             elif right_margin < left_margin * 0.5:  # Right margin is significantly smaller
                                 text_align = 'right'
                     
-                    text = proofread_paragraphs[current_paragraph]
+                    # Sanitize text before drawing
+                    text = sanitize_text(proofread_paragraphs[current_paragraph])
                     c.setFont(font_name, font_size)
                     c.setFillColorRGB(r, g, b)
                     
