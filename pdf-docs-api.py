@@ -275,9 +275,6 @@ def detect_lists(lines):
         for i, line in enumerate(lines):
             text = line['text'].strip()
             
-            # Compute indentation safely
-            indentation = len(text) - len(text.lstrip())
-            
             # Check if this line is a list item
             is_bullet = bool(bullet_pattern.match(text))
             is_numbered = bool(number_pattern.match(text))
@@ -289,25 +286,22 @@ def detect_lists(lines):
                         'items': [],
                         'type': 'bullet' if is_bullet else 'numbered',
                         'start_line': i,
-                        'indentation': indentation
+                        'indentation': len(text) - len(text.lstrip())
                     }
                 
                 # Add item to current list
                 current_list['items'].append({
                     'text': text,
                     'line_index': i,
-                    'indentation': indentation
+                    'indentation': len(text) - len(text.lstrip())
                 })
             else:
                 # If we have a current list and this line is not a list item
                 if current_list:
                     # Check if this line is a continuation of the previous list item
-                    prev_item = current_list['items'][-1] if current_list['items'] else None
-                    prev_indent = prev_item['indentation'] if prev_item else 0
-                    line_indent = line.get('indentation', indentation)
                     if (i > 0 and 
                         lines[i-1]['text'].strip() and 
-                        line_indent > current_list.get('indentation', 0)):
+                        line['indentation'] > current_list['indentation']):
                         # This is a continuation of the previous list item
                         current_list['items'][-1]['text'] += ' ' + text
                     else:
@@ -715,7 +709,7 @@ def extract_text_with_formatting(pdf_path):
                 sorted_lines = sorted(lines.items(), key=lambda x: x[0])
                 
                 # Process each line
-                for line_idx, (y_pos, line_words) in enumerate(sorted_lines):
+                for y_pos, line_words in sorted_lines:
                     # Sort words in line by x-position (left to right)
                     line_words.sort(key=lambda x: x['x0'])
                     
@@ -728,8 +722,7 @@ def extract_text_with_formatting(pdf_path):
                         'is_table': False,
                         'is_column': False,
                         'is_header': False,
-                        'is_footer': False,
-                        'line_index': line_idx
+                        'is_footer': False
                     }
                     
                     # Check if this line is part of a table
@@ -791,16 +784,6 @@ def extract_text_with_formatting(pdf_path):
         logger.error(f"Error extracting text with formatting: {str(e)}")
         raise
 
-def sanitize_text_remove_all_symbols(text):
-    """
-    Remove all black squares, bullets, similar symbols, and any non-ASCII, non-printable, or non-standard characters from the text.
-    """
-    # Remove known symbols
-    text = re.sub(r'[■▪□◆●•◦◾◼◻◊]', '', text)
-    # Remove all non-ASCII characters except standard punctuation and whitespace
-    text = re.sub(r'[^\x20-\x7E\n\r\t]', '', text)
-    return text
-
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
@@ -826,26 +809,16 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             
             # Split text into paragraphs while preserving line breaks
             if isinstance(text, str):
-                sanitized_text = sanitize_text_remove_all_symbols(text)
-                proofread_paragraphs = sanitized_text.split('\n')
+                proofread_paragraphs = text.split('\n')
             else:
-                proofread_paragraphs = [sanitize_text_remove_all_symbols(t) for t in text]
-            # Remove any paragraph that is just a black square or similar symbol (or empty after sanitization)
-            proofread_paragraphs = [p for p in proofread_paragraphs if p.strip() and not re.fullmatch(r'[■▪□◆●•◦◾◼◻◊]', p.strip())]
+                proofread_paragraphs = text
             
-            # Track current paragraph and page
+            # Track current paragraph
             current_paragraph = 0
-            current_page = 0
-            
-            # Pattern for unwanted symbols
-            unwanted_pattern = re.compile(r'^[■▪□◆●•◦◾◼◻◊]$')
             
             # Process each page
             for page_num, (page, mupdf_page) in enumerate(zip(pdf.pages, doc)):
                 logger.info(f"Processing page {page_num + 1}")
-                
-                # Reset canvas state for new page
-                c.setPageSize((page_width, page_height))
                 
                 # Get words with formatting for this page
                 words = page.extract_words(
@@ -869,12 +842,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     if current_paragraph >= len(proofread_paragraphs):
                         break
                     
-                    # Filter out unwanted symbols from line_words
-                    line_words = [w for w in line_words if not unwanted_pattern.match(w['text'])]
-                    if not line_words:
-                        current_paragraph += 1
-                        continue
-                    
                     # Sort words in line by horizontal position
                     line_words.sort(key=lambda x: x['x0'])
                     
@@ -890,70 +857,61 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
                     
-                    # Calculate text position and width
+                    # Calculate text position
                     x_pos = first_word['x0']
                     y_pos_adjusted = page_height - first_word['top'] - font_size/3
                     
-                    # Calculate line boundaries and margins
-                    line_start = line_words[0]['x0']
-                    line_end = line_words[-1]['x1']
-                    line_width = line_end - line_start
-                    left_margin = line_start
-                    right_margin = page_width - line_end
+                    # Calculate line width for alignment
+                    line_width = line_words[-1]['x1'] - line_words[0]['x0']
                     
-                    # Enhanced text alignment detection
+                    # Get text alignment from original
                     text_align = 'left'  # Default
                     if len(line_words) > 1:
-                        # Calculate line center and page center
-                        line_center = (line_start + line_end) / 2
+                        # Check if text is centered
                         page_center = page_width / 2
-                        
-                        # Calculate word spacing statistics
-                        spacings = []
-                        for i in range(len(line_words) - 1):
-                            spacing = line_words[i + 1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
-                            spacings.append(spacing)
-                        
-                        if spacings:
-                            avg_spacing = sum(spacings) / len(spacings)
-                            std_dev = (sum((s - avg_spacing) ** 2 for s in spacings) / len(spacings)) ** 0.5
-                            
-                            # Check for justified text first (most specific)
-                            if std_dev < avg_spacing * 0.2 and len(line_words) > 2:
-                                text_align = 'justify'
-                            # Then check for centered text
-                            elif abs(page_center - line_center) < 20:  # 20pt tolerance
-                                text_align = 'center'
-                            # Then check for right-aligned text
-                            elif right_margin < left_margin * 0.5:  # Right margin is significantly smaller
-                                text_align = 'right'
+                        line_center = (line_words[0]['x0'] + line_words[-1]['x1']) / 2
+                        if abs(page_center - line_center) < 20:  # 20pt tolerance
+                            text_align = 'center'
+                        # Check if text is right-aligned
+                        elif line_words[0]['x0'] > page_width * 0.7:
+                            text_align = 'right'
+                        # Check if text is justified
+                        else:
+                            # Calculate average word spacing
+                            total_spacing = 0
+                            word_count = len(line_words)
+                            if word_count > 1:
+                                for i in range(word_count - 1):
+                                    spacing = line_words[i + 1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
+                                    total_spacing += spacing
+                                avg_spacing = total_spacing / (word_count - 1)
+                                
+                                # Check if spacing is relatively uniform (justified text)
+                                is_uniform = True
+                                for i in range(word_count - 1):
+                                    spacing = line_words[i + 1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
+                                    if abs(spacing - avg_spacing) > avg_spacing * 0.2:  # 20% tolerance
+                                        is_uniform = False
+                                        break
+                                
+                                if is_uniform and word_count > 2:  # Need at least 3 words for justified text
+                                    text_align = 'justify'
                     
-                    # Sanitize proofread text, always removing all unwanted symbols
                     text = proofread_paragraphs[current_paragraph]
-                    # Skip drawing if sanitized text is empty or only whitespace
-                    if not text.strip():
-                        current_paragraph += 1
-                        continue
                     c.setFont(font_name, font_size)
                     c.setFillColorRGB(r, g, b)
-                    
-                    # Enhanced text alignment handling
                     if text_align == 'center':
-                        # Center text relative to the line width
-                        text_width = c.stringWidth(text, font_name, font_size)
-                        center_x = x_pos + (line_width - text_width) / 2
-                        c.drawString(center_x, y_pos_adjusted, text)
+                        c.drawCentredString(x_pos + line_width/2, y_pos_adjusted, text)
                     elif text_align == 'right':
-                        # Right align text
-                        text_width = c.stringWidth(text, font_name, font_size)
-                        right_x = x_pos + line_width - text_width
-                        c.drawString(right_x, y_pos_adjusted, text)
+                        c.drawRightString(x_pos + line_width, y_pos_adjusted, text)
                     elif text_align == 'justify':
-                        # Enhanced justified text handling
+                        # For justified text, we need to calculate word spacing
                         words = text.split()
                         if len(words) > 1:
                             # Calculate total width of text
-                            total_text_width = sum(c.stringWidth(word, font_name, font_size) for word in words)
+                            total_text_width = 0
+                            for word in words:
+                                total_text_width += c.stringWidth(word, font_name, font_size)
                             # Calculate space between words
                             space_width = (line_width - total_text_width) / (len(words) - 1)
                             # Draw each word with calculated spacing
@@ -982,9 +940,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     c.setFont('Helvetica', 10)
                     c.drawString(page_width/2, 30, str(page.page_number))
                 
-                # Save the current page and start a new one
                 c.showPage()
-                current_page += 1
             
             # Save the PDF
             c.save()
