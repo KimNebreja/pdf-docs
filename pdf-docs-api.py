@@ -782,86 +782,64 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             # Create a new PDF with reportlab using exact dimensions
             c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
             
-            # Extract text with formatting
+            # Extract text with formatting (all lines, all pages)
             formatted_text = extract_text_with_formatting(original_pdf_path)
             
-            # Split text into paragraphs while preserving line breaks
+            # Split proofread text into lines
             if isinstance(text, str):
-                proofread_paragraphs = text.split('\n')
+                proofread_lines = text.splitlines()
             else:
-                proofread_paragraphs = text
+                proofread_lines = text
             
-            # Track current paragraph
-            current_paragraph = 0
+            # Group formatted_text by page
+            lines_by_page = {}
+            for line in formatted_text:
+                page_num = line.get('page', 0)
+                if page_num not in lines_by_page:
+                    lines_by_page[page_num] = []
+                lines_by_page[page_num].append(line)
             
-            # Process each page
-            for page_num, (page, mupdf_page) in enumerate(zip(pdf.pages, doc)):
-                logger.info(f"Processing page {page_num + 1}")
-                
-                # Get words with formatting for this page
-                words = page.extract_words(
-                    keep_blank_chars=True,
-                    x_tolerance=3,
-                    y_tolerance=3,
-                    extra_attrs=['fontname', 'size', 'upright', 'top', 'bottom']
-                )
-                
-                # Group words by line based on vertical position
-                lines = defaultdict(list)
-                for word in words:
-                    y_pos = round(word['top'], 1)
-                    lines[y_pos].append(word)
-                
-                # Sort lines by vertical position
-                sorted_lines = sorted(lines.items(), key=lambda x: x[0])
-                
-                # Process each line
-                for y_pos, line_words in sorted_lines:
-                    if current_paragraph >= len(proofread_paragraphs):
+            line_index = 0  # Index for proofread_lines
+            num_pages = len(pdf.pages)
+            for page_num in range(num_pages):
+                mupdf_page = doc[page_num]
+                page_lines = lines_by_page.get(page_num, [])
+                for line_obj in page_lines:
+                    if line_index >= len(proofread_lines):
                         break
-                    
-                    # Sort words in line by horizontal position
-                    line_words.sort(key=lambda x: x['x0'])
-                    
-                    # Get formatting from first word in line
+                    # Use original formatting
+                    line_words = line_obj['words']
+                    if not line_words:
+                        continue
                     first_word = line_words[0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
-                    
                     # Get text color
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], 
                                    first_word['x0'] + first_word['width'], 
                                    first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
-                    
                     # Calculate text position
                     x_pos = first_word['x0']
                     y_pos_adjusted = page_height - first_word['top'] - font_size/3
-                    
                     # Create text object with exact formatting
                     text_object = c.beginText(x_pos, y_pos_adjusted)
                     text_object.setFont(font_name, font_size)
                     text_object.setFillColorRGB(r, g, b)
-                    
-                    # Add text while preserving spacing
-                    text_object.textLine(proofread_paragraphs[current_paragraph])
+                    # Add the proofread line
+                    text_object.textLine(proofread_lines[line_index])
                     c.drawText(text_object)
-                    
-                    current_paragraph += 1
-                
+                    line_index += 1
                 # Add page numbers if present in original
-                if page.page_number is not None:
+                if pdf.pages[page_num].page_number is not None:
                     c.setFont('Helvetica', 10)
-                    c.drawString(page_width/2, 30, str(page.page_number))
-                
+                    c.drawString(page_width/2, 30, str(pdf.pages[page_num].page_number))
                 c.showPage()
-            
             # Save the PDF
             c.save()
             doc.close()
             logger.info("PDF saved successfully with original formatting")
-            
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
