@@ -792,8 +792,14 @@ def extract_text_with_formatting(pdf_path):
         raise
 
 def sanitize_text_remove_all_symbols(text):
-    """Remove all black squares, bullets, and similar symbols from the text, unconditionally."""
-    return re.sub(r'[■▪□◆●•◦◾◼◻◊]', '', text)
+    """
+    Remove all black squares, bullets, similar symbols, and any non-ASCII, non-printable, or non-standard characters from the text.
+    """
+    # Remove known symbols
+    text = re.sub(r'[■▪□◆●•◦◾◼◻◊]', '', text)
+    # Remove all non-ASCII characters except standard punctuation and whitespace
+    text = re.sub(r'[^\x20-\x7E\n\r\t]', '', text)
+    return text
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
