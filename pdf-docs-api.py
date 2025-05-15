@@ -866,6 +866,16 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
 
+def clean_text(text):
+    """
+    Removes unwanted square markings and other non-standard characters from text.
+    """
+    # Remove black square (■) and similar artifacts
+    cleaned = re.sub(r'[\u25A0-\u25AF]', '', text)
+    # Optionally, remove other non-printable/control characters
+    cleaned = re.sub(r'[\x00-\x1F\x7F]', '', cleaned)
+    return cleaned
+
 @app.route('/convert', methods=['POST'])
 def convert_and_proofread():
     """Handles PDF proofreading."""
@@ -906,7 +916,7 @@ def convert_and_proofread():
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
             
             # Use the original PDF as a template for formatting
-            save_text_to_pdf(proofread_text_content, output_path, original_pdf_path)
+            save_text_to_pdf(clean_text(proofread_text_content), output_path, original_pdf_path)
             
             return jsonify({
                 "download_url": "/download/" + output_filename
@@ -940,7 +950,7 @@ def convert_and_proofread():
         os.makedirs(OUTPUT_FOLDER, exist_ok=True)
         
         # Save the proofread PDF using the original as template
-        save_text_to_pdf(proofread_text_content, proofread_pdf_path, pdf_path)
+        save_text_to_pdf(clean_text(proofread_text_content), proofread_pdf_path, pdf_path)
 
         return jsonify({
             "original_text": extracted_text,
