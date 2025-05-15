@@ -813,12 +813,16 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             else:
                 proofread_paragraphs = text
             
-            # Track current paragraph
+            # Track current paragraph and page
             current_paragraph = 0
+            current_page = 0
             
             # Process each page
             for page_num, (page, mupdf_page) in enumerate(zip(pdf.pages, doc)):
                 logger.info(f"Processing page {page_num + 1}")
+                
+                # Reset canvas state for new page
+                c.setPageSize((page_width, page_height))
                 
                 # Get words with formatting for this page
                 words = page.extract_words(
@@ -944,6 +948,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 
                 # Save the current page and start a new one
                 c.showPage()
+                current_page += 1
             
             # Save the PDF
             c.save()
