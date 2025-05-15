@@ -10,7 +10,7 @@ from reportlab.lib.colors import Color
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Frame
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 import io
 import logging
@@ -783,102 +783,62 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
             
             # Extract text with formatting
-            formatted_text = extract_text_with_formatting(original_pdf_path)
+            formatted_lines = extract_text_with_formatting(original_pdf_path)
             
-            # Split text into paragraphs while preserving line breaks
+            # Split proofread text into lines (to match original line count)
             if isinstance(text, str):
-                proofread_paragraphs = text.split('\n')
+                proofread_lines = text.split('\n')
             else:
-                proofread_paragraphs = text
+                proofread_lines = text
             
-            # Track current paragraph
-            current_paragraph = 0
-            
-            # Process each page
-            for page_num, (page, mupdf_page) in enumerate(zip(pdf.pages, doc)):
-                logger.info(f"Processing page {page_num + 1}")
-                
-                # Get words with formatting for this page
-                words = page.extract_words(
-                    keep_blank_chars=True,
-                    x_tolerance=3,
-                    y_tolerance=3,
-                    extra_attrs=['fontname', 'size', 'upright', 'top', 'bottom']
-                )
-                
-                # Group words by line based on vertical position
-                lines = defaultdict(list)
-                for word in words:
-                    y_pos = round(word['top'], 1)
-                    lines[y_pos].append(word)
-                
-                # Sort lines by vertical position
-                sorted_lines = sorted(lines.items(), key=lambda x: x[0])
-                
-                # Process each line
-                for y_pos, line_words in sorted_lines:
-                    if current_paragraph >= len(proofread_paragraphs):
-                        break
-                    
-                    # Sort words in line by horizontal position
-                    line_words.sort(key=lambda x: x['x0'])
-                    
-                    # Get formatting from first word in line
-                    first_word = line_words[0]
-                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                    font_size = float(first_word.get('size', 11))
-                    
-                    # Get text color
-                    bbox = fitz.Rect(first_word['x0'], first_word['top'], 
-                                   first_word['x0'] + first_word['width'], 
-                                   first_word['bottom'])
-                    color = get_text_color(mupdf_page, bbox)
-                    r, g, b = normalize_color(color) if color else (0, 0, 0)
-                    
-                    # Calculate text position
-                    x_pos = first_word['x0']
-                    y_pos_adjusted = page_height - first_word['top'] - font_size/3
-                    
-                    # Create text object with exact formatting
-                    text_object = c.beginText(x_pos, y_pos_adjusted)
-                    text_object.setFont(font_name, font_size)
-                    text_object.setFillColorRGB(r, g, b)
-                    text_object.setTextRenderMode(0)  # Normal rendering mode
-                    text_object.setWordSpace(0)  # Reset word spacing
-                    text_object.setCharSpace(0)  # Reset character spacing
-                    
-                    # Add text while preserving spacing and justifying
-                    text = proofread_paragraphs[current_paragraph]
-                    words = text.split()
+            line_idx = 0
+            for line in formatted_lines:
+                if line_idx >= len(proofread_lines):
+                    break
+                # Get formatting from first word in line
+                if not line['words']:
+                    continue
+                first_word = line['words'][0]
+                font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                font_size = float(first_word.get('size', 11))
+                x_pos = first_word['x0']
+                y_pos = page_height - first_word['top'] - font_size/3
+                # Get text color
+                page_num = line.get('page', 0)
+                mupdf_page = doc[page_num]
+                bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                color = get_text_color(mupdf_page, bbox)
+                r, g, b = normalize_color(color) if color else (0, 0, 0)
+                c.setFont(font_name, font_size)
+                c.setFillColorRGB(r, g, b)
+                # If this is a table/header/footer, draw as is
+                if line.get('is_table') or line.get('is_header') or line.get('is_footer'):
+                    c.drawString(x_pos, y_pos, proofread_lines[line_idx])
+                else:
+                    # Justify body text
+                    words = proofread_lines[line_idx].split()
                     if len(words) > 1:
-                        # Calculate total width of text
-                        total_width = sum(c.stringWidth(word, font_name, font_size) for word in words)
-                        # Calculate space between words for justification
-                        space_width = (page_width - total_width) / (len(words) - 1)
-                        # Add each word with calculated spacing
+                        total_text_width = sum(c.stringWidth(word, font_name, font_size) for word in words)
+                        # Use original line width for justification
+                        orig_line_width = (line['words'][-1]['x0'] + line['words'][-1]['width']) - line['words'][0]['x0']
+                        if orig_line_width > total_text_width:
+                            space_width = (orig_line_width - total_text_width) / (len(words) - 1)
+                        else:
+                            space_width = c.stringWidth(' ', font_name, font_size)
+                        text_obj = c.beginText(x_pos, y_pos)
+                        text_obj.setFont(font_name, font_size)
+                        text_obj.setFillColorRGB(r, g, b)
                         for i, word in enumerate(words):
-                            text_object.textOut(word)
-                            if i < len(words) - 1:  # Don't add space after last word
-                                text_object.textOut(' ' * int(space_width / c.stringWidth(' ', font_name, font_size)))
+                            text_obj.textOut(word)
+                            if i < len(words) - 1:
+                                text_obj.moveCursor(space_width, 0)
+                        c.drawText(text_obj)
                     else:
-                        text_object.textLine(text)
-                    
-                    c.drawText(text_object)
-                    
-                    current_paragraph += 1
-                
-                # Add page numbers if present in original
-                if page.page_number is not None:
-                    c.setFont('Helvetica', 10)
-                    c.drawString(page_width/2, 30, str(page.page_number))
-                
-                c.showPage()
-            
-            # Save the PDF
+                        c.drawString(x_pos, y_pos, proofread_lines[line_idx])
+                line_idx += 1
             c.save()
             doc.close()
             logger.info("PDF saved successfully with original formatting")
-            
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
