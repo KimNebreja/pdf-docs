@@ -921,6 +921,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     
                     # Sanitize proofread text, always removing all unwanted symbols
                     text = sanitize_text_remove_all_symbols(proofread_paragraphs[current_paragraph])
+                    # Skip drawing if sanitized text is empty or only whitespace
+                    if not text.strip():
+                        current_paragraph += 1
+                        continue
                     c.setFont(font_name, font_size)
                     c.setFillColorRGB(r, g, b)
                     
