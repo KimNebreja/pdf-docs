@@ -765,32 +765,27 @@ def extract_text_with_formatting(pdf_path):
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
+    Reflows the proofread text to fit the original line positions and widths.
     """
     try:
-        # Register fonts
         register_fonts()
-        
-        # Open the original PDF with both pdfplumber and PyMuPDF
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
-            
-            # Get page dimensions from the first page
             first_page = pdf.pages[0]
             page_width = first_page.width
             page_height = first_page.height
-            
-            # Create a new PDF with reportlab using exact dimensions
             c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
-            
-            # Extract text with formatting (all lines, all pages)
             formatted_text = extract_text_with_formatting(original_pdf_path)
-            
-            # Split proofread text into lines
+
+            # Prepare proofread text as a single string (remove all line breaks)
             if isinstance(text, str):
-                proofread_lines = text.splitlines()
+                proofread_text = text.replace('\n', ' ')
             else:
-                proofread_lines = text
-            
+                proofread_text = ' '.join(text)
+            proofread_text = proofread_text.strip()
+            proofread_pos = 0
+            proofread_len = len(proofread_text)
+
             # Group formatted_text by page
             lines_by_page = {}
             for line in formatted_text:
@@ -798,18 +793,14 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 if page_num not in lines_by_page:
                     lines_by_page[page_num] = []
                 lines_by_page[page_num].append(line)
-            
-            line_index = 0  # Index for proofread_lines
+
             num_pages = len(pdf.pages)
             for page_num in range(num_pages):
                 mupdf_page = doc[page_num]
                 page_lines = lines_by_page.get(page_num, [])
                 for line_obj in page_lines:
-                    if line_index >= len(proofread_lines):
-                        break
-                    # Use original formatting
                     line_words = line_obj['words']
-                    if not line_words:
+                    if not line_words or proofread_pos >= proofread_len:
                         continue
                     first_word = line_words[0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
@@ -820,23 +811,46 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                                    first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
-                    # Calculate text position
                     x_pos = first_word['x0']
                     y_pos_adjusted = page_height - first_word['top'] - font_size/3
-                    # Create text object with exact formatting
+                    # Calculate available width for this line
+                    if len(line_words) > 1:
+                        last_word = line_words[-1]
+                        line_x1 = last_word['x0'] + last_word['width']
+                    else:
+                        line_x1 = x_pos + first_word['width'] * 10  # fallback
+                    available_width = line_x1 - x_pos
+                    # Find how much of the proofread text fits in this width
+                    # (Try to break at a space for best word wrapping)
+                    max_fit = 0
+                    for end in range(proofread_pos+1, proofread_len+1):
+                        substr = proofread_text[proofread_pos:end]
+                        width = c.stringWidth(substr, font_name, font_size)
+                        if width > available_width:
+                            break
+                        max_fit = end
+                        if end < proofread_len and proofread_text[end] == ' ':
+                            # Prefer breaking at a space
+                            max_fit = end
+                    if max_fit == proofread_pos:
+                        # If not even one character fits, skip this line
+                        continue
+                    line_str = proofread_text[proofread_pos:max_fit].rstrip()
+                    proofread_pos = max_fit
+                    # Skip leading spaces for next line
+                    while proofread_pos < proofread_len and proofread_text[proofread_pos] == ' ':
+                        proofread_pos += 1
+                    # Draw the text
                     text_object = c.beginText(x_pos, y_pos_adjusted)
                     text_object.setFont(font_name, font_size)
                     text_object.setFillColorRGB(r, g, b)
-                    # Add the proofread line
-                    text_object.textLine(proofread_lines[line_index])
+                    text_object.textLine(line_str)
                     c.drawText(text_object)
-                    line_index += 1
                 # Add page numbers if present in original
                 if pdf.pages[page_num].page_number is not None:
                     c.setFont('Helvetica', 10)
                     c.drawString(page_width/2, 30, str(pdf.pages[page_num].page_number))
                 c.showPage()
-            # Save the PDF
             c.save()
             doc.close()
             logger.info("PDF saved successfully with original formatting")
