@@ -792,8 +792,9 @@ def extract_text_with_formatting(pdf_path):
         raise
 
 def sanitize_text(text):
-    """Replace black squares and similar symbols with a bullet or remove them."""
-    return re.sub(r'[■▪□◆]', '', text)
+    """Remove black squares, bullets, and similar symbols from the text."""
+    # Remove common bullet and square-like symbols
+    return re.sub(r'[■▪□◆●•◦◾◼◻◊]', '', text)
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
