@@ -826,9 +826,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             
             # Split text into paragraphs while preserving line breaks
             if isinstance(text, str):
-                proofread_paragraphs = text.split('\n')
+                sanitized_text = sanitize_text_remove_all_symbols(text)
+                proofread_paragraphs = sanitized_text.split('\n')
             else:
-                proofread_paragraphs = text
+                proofread_paragraphs = [sanitize_text_remove_all_symbols(t) for t in text]
             
             # Track current paragraph and page
             current_paragraph = 0
@@ -926,7 +927,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                                 text_align = 'right'
                     
                     # Sanitize proofread text, always removing all unwanted symbols
-                    text = sanitize_text_remove_all_symbols(proofread_paragraphs[current_paragraph])
+                    text = proofread_paragraphs[current_paragraph]
                     # Skip drawing if sanitized text is empty or only whitespace
                     if not text.strip():
                         current_paragraph += 1
