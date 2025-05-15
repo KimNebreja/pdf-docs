@@ -765,7 +765,7 @@ def extract_text_with_formatting(pdf_path):
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
-    Reflows the proofread text to fit the original line positions and widths.
+    Reflows the proofread text to fit the original line positions and widths, wrapping by words.
     """
     try:
         register_fonts()
@@ -782,9 +782,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 proofread_text = text.replace('\n', ' ')
             else:
                 proofread_text = ' '.join(text)
-            proofread_text = proofread_text.strip()
-            proofread_pos = 0
-            proofread_len = len(proofread_text)
+            proofread_text = re.sub(r'\s+', ' ', proofread_text).strip()
+            words = proofread_text.split(' ')
+            word_index = 0
+            num_words = len(words)
 
             # Group formatted_text by page
             lines_by_page = {}
@@ -800,12 +801,11 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 page_lines = lines_by_page.get(page_num, [])
                 for line_obj in page_lines:
                     line_words = line_obj['words']
-                    if not line_words or proofread_pos >= proofread_len:
+                    if not line_words or word_index >= num_words:
                         continue
                     first_word = line_words[0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
-                    # Get text color
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], 
                                    first_word['x0'] + first_word['width'], 
                                    first_word['bottom'])
@@ -813,40 +813,36 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
                     x_pos = first_word['x0']
                     y_pos_adjusted = page_height - first_word['top'] - font_size/3
-                    # Calculate available width for this line
                     if len(line_words) > 1:
                         last_word = line_words[-1]
                         line_x1 = last_word['x0'] + last_word['width']
                     else:
                         line_x1 = x_pos + first_word['width'] * 10  # fallback
                     available_width = line_x1 - x_pos
-                    # Find how much of the proofread text fits in this width
-                    # (Try to break at a space for best word wrapping)
-                    max_fit = 0
-                    for end in range(proofread_pos+1, proofread_len+1):
-                        substr = proofread_text[proofread_pos:end]
-                        width = c.stringWidth(substr, font_name, font_size)
+
+                    # Build the line by adding words until width is exceeded
+                    line_str = ''
+                    test_str = ''
+                    while word_index < num_words:
+                        next_word = words[word_index]
+                        if line_str:
+                            test_str = line_str + ' ' + next_word
+                        else:
+                            test_str = next_word
+                        width = c.stringWidth(test_str, font_name, font_size)
                         if width > available_width:
                             break
-                        max_fit = end
-                        if end < proofread_len and proofread_text[end] == ' ':
-                            # Prefer breaking at a space
-                            max_fit = end
-                    if max_fit == proofread_pos:
-                        # If not even one character fits, skip this line
-                        continue
-                    line_str = proofread_text[proofread_pos:max_fit].rstrip()
-                    proofread_pos = max_fit
-                    # Skip leading spaces for next line
-                    while proofread_pos < proofread_len and proofread_text[proofread_pos] == ' ':
-                        proofread_pos += 1
-                    # Draw the text
+                        line_str = test_str
+                        word_index += 1
+
+                    if not line_str:
+                        continue  # If no word fits, skip
+
                     text_object = c.beginText(x_pos, y_pos_adjusted)
                     text_object.setFont(font_name, font_size)
                     text_object.setFillColorRGB(r, g, b)
                     text_object.textLine(line_str)
                     c.drawText(text_object)
-                # Add page numbers if present in original
                 if pdf.pages[page_num].page_number is not None:
                     c.setFont('Helvetica', 10)
                     c.drawString(page_width/2, 30, str(pdf.pages[page_num].page_number))
