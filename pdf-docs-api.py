@@ -904,14 +904,79 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     c.setFont(font_name, font_size)
                     c.setFillColorRGB(r, g, b)
                     
-                    # Clean the text of any special characters that might cause rendering issues
-                    text = text.replace('\u2022', '•')  # Replace bullet points
-                    text = text.replace('\u2013', '-')  # Replace en dash
-                    text = text.replace('\u2014', '--')  # Replace em dash
-                    text = text.replace('\u2018', "'")  # Replace left single quote
-                    text = text.replace('\u2019', "'")  # Replace right single quote
-                    text = text.replace('\u201c', '"')  # Replace left double quote
-                    text = text.replace('\u201d', '"')  # Replace right double quote
+                    # Clean and normalize text
+                    def clean_text(t):
+                        # Replace problematic characters with their ASCII equivalents
+                        replacements = {
+                            '\u2022': '•',  # Bullet point
+                            '\u2013': '-',  # En dash
+                            '\u2014': '--',  # Em dash
+                            '\u2018': "'",  # Left single quote
+                            '\u2019': "'",  # Right single quote
+                            '\u201c': '"',  # Left double quote
+                            '\u201d': '"',  # Right double quote
+                            '\u00a0': ' ',  # Non-breaking space
+                            '\u2026': '...',  # Ellipsis
+                            '\u2012': '-',  # Figure dash
+                            '\u2015': '--',  # Horizontal bar
+                            '\u2017': '_',  # Double low line
+                            '\u201a': ',',  # Single low-9 quote
+                            '\u201b': "'",  # Single high-reversed-9 quote
+                            '\u201e': '"',  # Double low-9 quote
+                            '\u201f': '"',  # Double high-reversed-9 quote
+                            '\u2032': "'",  # Prime
+                            '\u2033': '"',  # Double prime
+                            '\u2034': '"',  # Triple prime
+                            '\u2035': "'",  # Reversed prime
+                            '\u2036': '"',  # Reversed double prime
+                            '\u2037': '"',  # Reversed triple prime
+                            '\u2038': '^',  # Caret
+                            '\u2039': '<',  # Single left-pointing angle quote
+                            '\u203a': '>',  # Single right-pointing angle quote
+                            '\u203c': '!!',  # Double exclamation mark
+                            '\u203d': '?!',  # Interrobang
+                            '\u203e': '-',  # Overline
+                            '\u2044': '/',  # Fraction slash
+                            '\u2045': '[',  # Left square bracket with quill
+                            '\u2046': ']',  # Right square bracket with quill
+                            '\u2047': '??',  # Double question mark
+                            '\u2048': '?!',  # Question exclamation mark
+                            '\u2049': '!?',  # Exclamation question mark
+                            '\u204a': '†',  # Latin cross
+                            '\u204b': '‡',  # Double dagger
+                            '\u204c': '‡',  # Black leftwards bullet
+                            '\u204d': '‡',  # Black rightwards bullet
+                            '\u204e': '*',  # Low asterisk
+                            '\u204f': ';',  # Reversed semicolon
+                            '\u2050': '%',  # Close up
+                            '\u2051': '**',  # Two asterisks aligned vertically
+                            '\u2052': '%',  # Commercial minus sign
+                            '\u2053': '~',  # Swung dash
+                            '\u2054': '^',  # Inverted undertie
+                            '\u2055': '*',  # Flower punctuation mark
+                            '\u2056': '...',  # Three dot punctuation
+                            '\u2057': '"',  # Quadruple prime
+                            '\u2058': '....',  # Four dot punctuation
+                            '\u2059': '.....',  # Five dot punctuation
+                            '\u205a': '......',  # Six dot punctuation
+                            '\u205b': '.......',  # Seven dot punctuation
+                            '\u205c': '........',  # Eight dot punctuation
+                            '\u205d': '.........',  # Nine dot punctuation
+                            '\u205e': '..........',  # Ten dot punctuation
+                            '\u205f': ' ',  # Medium mathematical space
+                        }
+                        
+                        # Apply replacements
+                        for old, new in replacements.items():
+                            t = t.replace(old, new)
+                        
+                        # Remove any remaining control characters
+                        t = ''.join(char for char in t if ord(char) >= 32 or char in '\n\r\t')
+                        
+                        return t
+                    
+                    # Clean the text
+                    text = clean_text(text)
                     
                     if text_align == 'center':
                         c.drawCentredString(x_pos + line_width/2, y_pos_adjusted, text)
