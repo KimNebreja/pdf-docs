@@ -791,10 +791,27 @@ def extract_text_with_formatting(pdf_path):
         logger.error(f"Error extracting text with formatting: {str(e)}")
         raise
 
-def sanitize_text(text):
-    """Remove black squares, bullets, and similar symbols from the text."""
-    # Remove common bullet and square-like symbols
-    return re.sub(r'[■▪□◆●•◦◾◼◻◊]', '', text)
+def sanitize_text_preserve_original(proofread_text, original_text):
+    """
+    Remove black squares, bullets, and similar symbols from proofread_text unless they are present in original_text.
+    """
+    # List of symbols to check
+    symbols = '■▪□◆●•◦◾◼◻◊'
+    # Remove any symbol from proofread_text that is not in original_text
+    sanitized = ''
+    for p_char, o_char in zip(proofread_text, original_text):
+        if p_char in symbols:
+            if p_char in original_text:
+                sanitized += p_char
+            # else: skip
+        else:
+            sanitized += p_char
+    # If proofread_text is longer than original_text, check the rest
+    if len(proofread_text) > len(original_text):
+        for p_char in proofread_text[len(original_text):]:
+            if p_char not in symbols:
+                sanitized += p_char
+    return sanitized
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
@@ -920,8 +937,17 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             elif right_margin < left_margin * 0.5:  # Right margin is significantly smaller
                                 text_align = 'right'
                     
-                    # Sanitize text before drawing
-                    text = sanitize_text(proofread_paragraphs[current_paragraph])
+                    # Get the original line text for this line (if available)
+                    original_line = ''
+                    if idx < len(formatted_text):
+                        # Try to get the original line from formatted_text
+                        try:
+                            original_line = formatted_text[current_paragraph]['text']
+                        except Exception:
+                            original_line = ''
+                    
+                    # Sanitize proofread text, preserving symbols only if present in original
+                    text = sanitize_text_preserve_original(proofread_paragraphs[current_paragraph], original_line)
                     c.setFont(font_name, font_size)
                     c.setFillColorRGB(r, g, b)
                     
