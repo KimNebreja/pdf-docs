@@ -830,6 +830,11 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         break
                     if paragraph['lines'][0]['page'] != page_num:
                         continue
+                    # Check if this paragraph is a table/header/footer or likely vertical/too small
+                    is_non_body = all(
+                        l.get('is_table') or l.get('is_header') or l.get('is_footer')
+                        for l in paragraph['lines']
+                    )
                     first_line = paragraph['lines'][0]
                     last_line = paragraph['lines'][-1]
                     x0 = min(w['x0'] for w in first_line['words'])
@@ -838,6 +843,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     y1 = max(l['y_pos'] for l in paragraph['lines']) + last_line['words'][0]['height']
                     width = x1 - x0
                     height = y1 - y0 + 0.5 * (last_line['words'][0]['height'])
+                    # Heuristic: skip if too small or likely vertical
+                    if is_non_body or width < 30 or height < 20 or height > width * 2:
+                        para_idx += 1
+                        continue
                     font_name = get_font_name(first_line['words'][0].get('fontname', 'Helvetica'))
                     font_size = float(first_line['words'][0].get('size', 11))
                     style = ParagraphStyle(
@@ -847,7 +856,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         leading=font_size * 1.2,
                         alignment=4,
                     )
-                    frame = Frame(x0, page_height - y1 - 0.25 * font_size, width, height, showBoundary=1)
+                    frame = Frame(x0, page_height - y1 - 0.25 * font_size, width, height, showBoundary=0)
                     para_text = aligned_proofread[para_idx] if para_idx < len(aligned_proofread) and aligned_proofread[para_idx].strip() else paragraph['text']
                     para = Paragraph(para_text, style)
                     frame.addFromList([para], c)
