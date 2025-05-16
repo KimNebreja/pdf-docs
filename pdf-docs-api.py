@@ -830,16 +830,21 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         break
                     if paragraph['lines'][0]['page'] != page_num:
                         continue
+                    # Filter out header/footer lines for body paragraph rendering
+                    body_lines = [l for l in paragraph['lines'] if not (l.get('is_header') or l.get('is_footer'))]
+                    if not body_lines:
+                        para_idx += 1
+                        continue  # Skip paragraphs that are only header/footer
                     is_non_body = all(
                         l.get('is_table') or l.get('is_header') or l.get('is_footer')
                         for l in paragraph['lines']
                     )
-                    first_line = paragraph['lines'][0]
-                    last_line = paragraph['lines'][-1]
+                    first_line = body_lines[0]
+                    last_line = body_lines[-1]
                     x0 = min(w['x0'] for w in first_line['words'])
-                    y0 = min(l['y_pos'] for l in paragraph['lines'])
+                    y0 = min(l['y_pos'] for l in body_lines)
                     x1 = max(w['x0'] + w['width'] for w in last_line['words'])
-                    y1 = max(l['y_pos'] for l in paragraph['lines']) + last_line['words'][0]['height']
+                    y1 = max(l['y_pos'] for l in body_lines) + last_line['words'][0]['height']
                     width = x1 - x0
                     height = y1 - y0 + 0.5 * (last_line['words'][0]['height'])
                     # Heuristic: skip if too small or likely vertical
@@ -915,37 +920,31 @@ def convert_and_proofread():
         if 'text' in request.form:
             proofread_text_content = request.form['text']
             original_filename = request.form.get('filename', 'document.pdf')
-            
             # Store the original file path in a session-like dictionary
             original_pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
-            
             # Ensure the original file exists
             if not os.path.exists(original_pdf_path):
                 # Try to find the file with "proofread_" prefix removed
                 base_filename = original_filename.replace("proofread_", "", 1)
                 original_pdf_path = os.path.join(UPLOAD_FOLDER, base_filename)
-                
                 if not os.path.exists(original_pdf_path):
                     return jsonify({"error": "Original file not found"}), 404
-            
             # Get selected suggestions
             selected_suggestions = {}
             if 'selected_suggestions' in request.form:
                 try:
                     selected_suggestions = dict(json.loads(request.form['selected_suggestions']))
-                    # Apply selected suggestions
+                    # Apply selected suggestions (replace whole words only)
                     for original_word, selected_word in selected_suggestions.items():
-                        proofread_text_content = proofread_text_content.replace(original_word, selected_word)
+                        # Use regex to replace only whole word matches
+                        proofread_text_content = re.sub(rf'\\b{re.escape(original_word)}\\b', selected_word, proofread_text_content)
                 except Exception as e:
                     logger.warning(f"Failed to parse selected suggestions: {str(e)}")
-
             # Generate PDF with the updated text
             output_filename = "proofread_" + original_filename.replace("proofread_", "", 1)  # Avoid duplicate prefix
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
-            
             # Use the original PDF as a template for formatting
             save_text_to_pdf(proofread_text_content, output_path, original_pdf_path)
-            
             return jsonify({
                 "download_url": "/download/" + output_filename
             })
