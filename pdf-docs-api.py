@@ -782,25 +782,8 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 proofread_paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
             else:
                 proofread_paragraphs = [p.strip() for p in text if p.strip()]
-            # Align proofread paragraphs to original using difflib, but always use proofread if available
-            original_paragraphs = [p['text'] for p in paragraphs]
-            sm = difflib.SequenceMatcher(None, original_paragraphs, proofread_paragraphs)
-            aligned_proofread = []
-            opcodes = sm.get_opcodes()
-            for tag, i1, i2, j1, j2 in opcodes:
-                if tag == 'equal':
-                    aligned_proofread.extend(proofread_paragraphs[j1:j2])
-                elif tag == 'replace' or tag == 'insert':
-                    for j in range(j1, j2):
-                        aligned_proofread.append(proofread_paragraphs[j])
-                elif tag == 'delete':
-                    for i in range(i1, i2):
-                        aligned_proofread.append(original_paragraphs[i])
-            if len(aligned_proofread) < len(paragraphs):
-                aligned_proofread += [original_paragraphs[i] for i in range(len(aligned_proofread), len(paragraphs))]
-            elif len(aligned_proofread) > len(paragraphs):
-                aligned_proofread[len(paragraphs)-1] += '\n' + '\n'.join(aligned_proofread[len(paragraphs):])
-                aligned_proofread = aligned_proofread[:len(paragraphs)]
+            # Use proofread paragraphs in order, never fallback to original
+            min_len = min(len(paragraphs), len(proofread_paragraphs))
             lines_by_page = defaultdict(list)
             for idx, line in enumerate(formatted_lines):
                 lines_by_page[line.get('page', 0)].append((line, idx))
@@ -812,7 +795,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 page_height = page_obj.height
                 c.setPageSize((page_width, page_height))
                 for paragraph in paragraphs:
-                    if para_idx >= len(aligned_proofread):
+                    if para_idx >= len(proofread_paragraphs):
                         break
                     if paragraph['lines'][0]['page'] != page_num:
                         continue
@@ -860,11 +843,29 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         leading=font_size * 1.2,
                         alignment=4,
                     )
+                    para_text = proofread_paragraphs[para_idx] if para_idx < len(proofread_paragraphs) else ''
+                    logger.info(f"Rendering paragraph {para_idx} on page {page_num}: {para_text[:100]}")
                     frame = Frame(x0, page_height - y1 - 0.25 * font_size, width, height, showBoundary=0)
-                    para_text = aligned_proofread[para_idx] if para_idx < len(aligned_proofread) and aligned_proofread[para_idx].strip() else paragraph['text']
                     para = Paragraph(para_text, style)
                     frame.addFromList([para], c)
                     para_idx += 1
+                # If there are extra proofread paragraphs, append them at the end of the last page
+                if page_num == num_pages - 1 and para_idx < len(proofread_paragraphs):
+                    y_cursor = 60  # Start a bit above the bottom margin
+                    for extra_idx in range(para_idx, len(proofread_paragraphs)):
+                        para_text = proofread_paragraphs[extra_idx]
+                        logger.info(f"Rendering extra paragraph {extra_idx} at end: {para_text[:100]}")
+                        style = ParagraphStyle(
+                            name='Justified',
+                            fontName='Helvetica',
+                            fontSize=12,
+                            leading=14,
+                            alignment=4,
+                        )
+                        frame = Frame(40, y_cursor, page_width-80, 100, showBoundary=0)
+                        para = Paragraph(para_text, style)
+                        frame.addFromList([para], c)
+                        y_cursor += 110
                 for line, idx in lines_by_page.get(page_num, []):
                     if not line['words']:
                         continue
@@ -887,7 +888,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     c.showPage()
             c.save()
             doc.close()
-            logger.info("PDF saved successfully with original formatting")
+            logger.info("PDF saved successfully with proofread content only")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
