@@ -688,10 +688,9 @@ def extract_text_with_formatting(pdf_path):
                 sorted_lines = sorted(lines.items(), key=lambda x: x[0])
                 
                 # Process each line
-                for y_pos, line_words in sorted_lines:
+                for line_num, (y_pos, line_words) in enumerate(sorted_lines):
                     # Sort words in line by x-position (left to right)
                     line_words.sort(key=lambda x: x['x0'])
-                    
                     # Create a line object with formatting
                     line_obj = {
                         'text': ' '.join([w['text'] for w in line_words]),
@@ -701,7 +700,8 @@ def extract_text_with_formatting(pdf_path):
                         'is_table': False,
                         'is_column': False,
                         'is_header': False,
-                        'is_footer': False
+                        'is_footer': False,
+                        'line_index': line_num
                     }
                     
                     # Check if this line is part of a table
