@@ -768,31 +768,21 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
     """
     try:
-        # Register fonts
         register_fonts()
-        
-        # Open the original PDF with both pdfplumber and PyMuPDF
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
-            
-            # Get page dimensions from the first page
             first_page = pdf.pages[0]
             page_width = first_page.width
             page_height = first_page.height
-            
-            # Create a new PDF with reportlab using exact dimensions
             c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
-            
-            # Extract text with formatting
             formatted_lines = extract_text_with_formatting(original_pdf_path)
-            # Detect paragraphs
             paragraphs = detect_paragraphs(formatted_lines)
             # Split proofread text into paragraphs using double newlines or blank lines
             if isinstance(text, str):
                 proofread_paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
             else:
                 proofread_paragraphs = [p.strip() for p in text if p.strip()]
-            # Align proofread paragraphs to original using difflib
+            # Align proofread paragraphs to original using difflib, but always use proofread if available
             original_paragraphs = [p['text'] for p in paragraphs]
             sm = difflib.SequenceMatcher(None, original_paragraphs, proofread_paragraphs)
             aligned_proofread = []
@@ -806,14 +796,11 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 elif tag == 'delete':
                     for i in range(i1, i2):
                         aligned_proofread.append(original_paragraphs[i])
-            # If there are leftover proofread paragraphs, append them to the last paragraph
             if len(aligned_proofread) < len(paragraphs):
                 aligned_proofread += [original_paragraphs[i] for i in range(len(aligned_proofread), len(paragraphs))]
             elif len(aligned_proofread) > len(paragraphs):
-                # Merge extras into the last paragraph
                 aligned_proofread[len(paragraphs)-1] += '\n' + '\n'.join(aligned_proofread[len(paragraphs):])
                 aligned_proofread = aligned_proofread[:len(paragraphs)]
-            # Group lines by page number
             lines_by_page = defaultdict(list)
             for idx, line in enumerate(formatted_lines):
                 lines_by_page[line.get('page', 0)].append((line, idx))
@@ -824,7 +811,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 page_width = page_obj.width
                 page_height = page_obj.height
                 c.setPageSize((page_width, page_height))
-                # Draw paragraphs for this page
                 for paragraph in paragraphs:
                     if para_idx >= len(aligned_proofread):
                         break
@@ -834,7 +820,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     body_lines = [l for l in paragraph['lines'] if not (l.get('is_header') or l.get('is_footer'))]
                     if not body_lines:
                         para_idx += 1
-                        continue  # Skip paragraphs that are only header/footer
+                        continue
                     is_non_body = all(
                         l.get('is_table') or l.get('is_header') or l.get('is_footer')
                         for l in paragraph['lines']
@@ -847,9 +833,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     y1 = max(l['y_pos'] for l in body_lines) + last_line['words'][0]['height']
                     width = x1 - x0
                     height = y1 - y0 + 0.5 * (last_line['words'][0]['height'])
-                    # Heuristic: skip if too small or likely vertical
                     if is_non_body or width < 30 or height < 20 or height > width * 2:
-                        # Fallback: render each line in this paragraph at its original position
                         for line in paragraph['lines']:
                             if not line['words']:
                                 continue
@@ -867,7 +851,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             c.drawString(x_pos, y_pos, line['text'])
                         para_idx += 1
                         continue
-                    # For body paragraphs, render the entire proofread paragraph as a single Paragraph in the bounding box
                     font_name = get_font_name(first_line['words'][0].get('fontname', 'Helvetica'))
                     font_size = float(first_line['words'][0].get('size', 11))
                     style = ParagraphStyle(
@@ -920,34 +903,25 @@ def convert_and_proofread():
         if 'text' in request.form:
             proofread_text_content = request.form['text']
             original_filename = request.form.get('filename', 'document.pdf')
-            # Store the original file path in a session-like dictionary
             original_pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
-            # Ensure the original file exists
             if not os.path.exists(original_pdf_path):
-                # Try to find the file with "proofread_" prefix removed
                 base_filename = original_filename.replace("proofread_", "", 1)
                 original_pdf_path = os.path.join(UPLOAD_FOLDER, base_filename)
                 if not os.path.exists(original_pdf_path):
                     return jsonify({"error": "Original file not found"}), 404
-            # Get selected suggestions
             selected_suggestions = {}
             if 'selected_suggestions' in request.form:
                 try:
                     selected_suggestions = dict(json.loads(request.form['selected_suggestions']))
-                    # Apply selected suggestions (replace whole words only)
                     for original_word, selected_word in selected_suggestions.items():
-                        # Use regex to replace only whole word matches
-                        proofread_text_content = re.sub(rf'\\b{re.escape(original_word)}\\b', selected_word, proofread_text_content)
+                        proofread_text_content = re.sub(rf'\b{re.escape(original_word)}\b', selected_word, proofread_text_content, flags=re.IGNORECASE)
                 except Exception as e:
                     logger.warning(f"Failed to parse selected suggestions: {str(e)}")
-            # Generate PDF with the updated text
-            output_filename = "proofread_" + original_filename.replace("proofread_", "", 1)  # Avoid duplicate prefix
+            logger.info(f"Using proofread text for PDF: {proofread_text_content[:200]}...")
+            output_filename = "proofread_" + original_filename.replace("proofread_", "", 1)
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
-            # Use the original PDF as a template for formatting
             save_text_to_pdf(proofread_text_content, output_path, original_pdf_path)
-            return jsonify({
-                "download_url": "/download/" + output_filename
-            })
+            return jsonify({"download_url": "/download/" + output_filename})
 
         # Handle file upload case
         file = request.files['file']
