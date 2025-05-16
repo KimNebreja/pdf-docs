@@ -845,6 +845,22 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     height = y1 - y0 + 0.5 * (last_line['words'][0]['height'])
                     # Heuristic: skip if too small or likely vertical
                     if is_non_body or width < 30 or height < 20 or height > width * 2:
+                        # Fallback: render each line in this paragraph at its original position
+                        for line in paragraph['lines']:
+                            if not line['words']:
+                                continue
+                            first_word = line['words'][0]
+                            font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                            font_size = float(first_word.get('size', 11))
+                            x_pos = first_word['x0']
+                            y_pos = page_height - first_word['top'] - font_size/3
+                            mupdf_page = doc[page_num]
+                            bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                            color = get_text_color(mupdf_page, bbox)
+                            r, g, b = normalize_color(color) if color else (0, 0, 0)
+                            c.setFont(font_name, font_size)
+                            c.setFillColorRGB(r, g, b)
+                            c.drawString(x_pos, y_pos, line['text'])
                         para_idx += 1
                         continue
                     font_name = get_font_name(first_line['words'][0].get('fontname', 'Helvetica'))
