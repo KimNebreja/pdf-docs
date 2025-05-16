@@ -809,46 +809,41 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             l.get('is_table') or l.get('is_header') or l.get('is_footer')
                             for l in paragraph['lines']
                         )
-                        first_line = body_lines[0]
-                        last_line = body_lines[-1]
-                        x0 = min(w['x0'] for w in first_line['words'])
-                        y0 = min(l['y_pos'] for l in body_lines)
-                        x1 = max(w['x0'] + w['width'] for w in last_line['words'])
-                        y1 = max(l['y_pos'] for l in body_lines) + last_line['words'][0]['height']
-                        width = x1 - x0
-                        height = y1 - y0 + 0.5 * (last_line['words'][0]['height'])
-                        if is_non_body or width < 30 or height < 20 or height > width * 2:
-                            for line in paragraph['lines']:
-                                if not line['words']:
-                                    continue
-                                first_word = line['words'][0]
-                                font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                                font_size = float(first_word.get('size', 11))
-                                x_pos = first_word['x0']
-                                y_pos = page_height - first_word['top'] - font_size/3
-                                mupdf_page = doc[page_num]
-                                bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
-                                color = get_text_color(mupdf_page, bbox)
-                                r, g, b = normalize_color(color) if color else (0, 0, 0)
+                        # Split both original and proofread paragraph into lines
+                        orig_lines = [l['text'] for l in body_lines]
+                        proof_lines = [l for l in proofread_paragraphs[para_idx].split('\n') if l.strip()]
+                        min_lines = min(len(orig_lines), len(proof_lines))
+                        # Render each line using original formatting and position, but proofread text
+                        for i in range(min_lines):
+                            line = body_lines[i]
+                            if not line['words']:
+                                continue
+                            first_word = line['words'][0]
+                            font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                            font_size = float(first_word.get('size', 11))
+                            x_pos = first_word['x0']
+                            y_pos = page_height - first_word['top'] - font_size/3
+                            mupdf_page = doc[page_num]
+                            bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                            color = get_text_color(mupdf_page, bbox)
+                            r, g, b = normalize_color(color) if color else (0, 0, 0)
+                            c.setFont(font_name, font_size)
+                            c.setFillColorRGB(r, g, b)
+                            c.drawString(x_pos, y_pos, proof_lines[i])
+                        # If there are extra proofread lines, append them below the last line
+                        if len(proof_lines) > min_lines:
+                            last_line = body_lines[-1]
+                            y_base = page_height - last_line['words'][0]['top'] - float(last_line['words'][0].get('size', 11))/3
+                            font_name = get_font_name(last_line['words'][0].get('fontname', 'Helvetica'))
+                            font_size = float(last_line['words'][0].get('size', 11))
+                            x_pos = last_line['words'][0]['x0']
+                            for j in range(min_lines, len(proof_lines)):
+                                y_base -= font_size * 1.2
                                 c.setFont(font_name, font_size)
-                                c.setFillColorRGB(r, g, b)
-                                c.drawString(x_pos, y_pos, line['text'])
-                            para_idx += 1
-                            continue
-                        font_name = get_font_name(first_line['words'][0].get('fontname', 'Helvetica'))
-                        font_size = float(first_line['words'][0].get('size', 11))
-                        style = ParagraphStyle(
-                            name='Justified',
-                            fontName=font_name,
-                            fontSize=font_size,
-                            leading=font_size * 1.2,
-                            alignment=4,
-                        )
-                        para_text = proofread_paragraphs[para_idx] if para_idx < len(proofread_paragraphs) else ''
-                        frame = Frame(x0, page_height - y1 - 0.25 * font_size, width, height, showBoundary=0)
-                        para = Paragraph(para_text, style)
-                        frame.addFromList([para], c)
+                                c.setFillColorRGB(0, 0, 0)
+                                c.drawString(x_pos, y_base, proof_lines[j])
                         para_idx += 1
+                        continue
                     for line, idx in lines_by_page.get(page_num, []):
                         if not line['words']:
                             continue
