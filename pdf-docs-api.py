@@ -801,17 +801,17 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 if tag == 'equal':
                     aligned_proofread.extend(proofread_paragraphs[j1:j2])
                 elif tag == 'replace' or tag == 'insert':
-                    # Use proofread text for these paragraphs
                     for j in range(j1, j2):
                         aligned_proofread.append(proofread_paragraphs[j])
                 elif tag == 'delete':
-                    # Use original text for deleted paragraphs
                     for i in range(i1, i2):
                         aligned_proofread.append(original_paragraphs[i])
-            # Ensure length matches
-            while len(aligned_proofread) < len(paragraphs):
-                aligned_proofread.append(paragraphs[len(aligned_proofread)]['text'])
-            if len(aligned_proofread) > len(paragraphs):
+            # If there are leftover proofread paragraphs, append them to the last paragraph
+            if len(aligned_proofread) < len(paragraphs):
+                aligned_proofread += [original_paragraphs[i] for i in range(len(aligned_proofread), len(paragraphs))]
+            elif len(aligned_proofread) > len(paragraphs):
+                # Merge extras into the last paragraph
+                aligned_proofread[len(paragraphs)-1] += '\n' + '\n'.join(aligned_proofread[len(paragraphs):])
                 aligned_proofread = aligned_proofread[:len(paragraphs)]
             # Group lines by page number
             lines_by_page = defaultdict(list)
@@ -828,10 +828,8 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 for paragraph in paragraphs:
                     if para_idx >= len(aligned_proofread):
                         break
-                    # Only draw paragraphs that belong to this page
                     if paragraph['lines'][0]['page'] != page_num:
                         continue
-                    # Get bounding box for the paragraph
                     first_line = paragraph['lines'][0]
                     last_line = paragraph['lines'][-1]
                     x0 = min(w['x0'] for w in first_line['words'])
@@ -839,24 +837,21 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     x1 = max(w['x0'] + w['width'] for w in last_line['words'])
                     y1 = max(l['y_pos'] for l in paragraph['lines']) + last_line['words'][0]['height']
                     width = x1 - x0
-                    height = y1 - y0 + 0.5 * (last_line['words'][0]['height'])  # add padding
-                    # Get font and size from first word
+                    height = y1 - y0 + 0.5 * (last_line['words'][0]['height'])
                     font_name = get_font_name(first_line['words'][0].get('fontname', 'Helvetica'))
                     font_size = float(first_line['words'][0].get('size', 11))
-                    # Define justified style
                     style = ParagraphStyle(
                         name='Justified',
                         fontName=font_name,
                         fontSize=font_size,
                         leading=font_size * 1.2,
-                        alignment=4,  # Justify
+                        alignment=4,
                     )
-                    # Create Frame and Paragraph
-                    frame = Frame(x0, page_height - y1 - 0.25 * font_size, width, height, showBoundary=0)
-                    para = Paragraph(aligned_proofread[para_idx], style)
+                    frame = Frame(x0, page_height - y1 - 0.25 * font_size, width, height, showBoundary=1)
+                    para_text = aligned_proofread[para_idx] if para_idx < len(aligned_proofread) and aligned_proofread[para_idx].strip() else paragraph['text']
+                    para = Paragraph(para_text, style)
                     frame.addFromList([para], c)
                     para_idx += 1
-                # Draw other elements (tables, headers, footers) as before
                 for line, idx in lines_by_page.get(page_num, []):
                     if not line['words']:
                         continue
