@@ -775,7 +775,12 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             first_page = pdf.pages[0]
             page_width = first_page.width
             page_height = first_page.height
-            c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
+            # Use SimpleDocTemplate for proper flowable handling
+            doc_template = SimpleDocTemplate(
+                pdf_path,
+                pagesize=(page_width, page_height),
+                leftMargin=72, rightMargin=72, topMargin=72, bottomMargin=72
+            )
             formatted_lines = extract_text_with_formatting(original_pdf_path)
             if isinstance(text, str):
                 proofread_words = text.split()
@@ -815,13 +820,8 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 para_indices = [l['line_index'] for l in para_lines]
                 para_text = ' '.join([corrected_lines[i] for i in para_indices])
                 para_texts.append((para_lines, para_text))
-            margin_left = 72  # 1 inch
-            margin_right = 72
-            margin_top = 72
-            margin_bottom = 72
-            usable_width = page_width - margin_left - margin_right
-            y_pos = page_height - margin_top
-            page_number = 1
+            # Build the story for Platypus
+            story = []
             for para_lines, para_text in para_texts:
                 if not para_lines:
                     continue
@@ -845,21 +845,13 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     rightIndent=0,
                 )
                 para = Paragraph(para_text, style)
-                w, h = para.wrap(usable_width, page_height)
-                if y_pos - h < margin_bottom:
-                    # Write page number before starting new page
-                    c.setFont('Helvetica', 10)
-                    c.drawString(page_width/2, 30, str(page_number))
-                    c.showPage()
-                    c.setPageSize((page_width, page_height))
-                    y_pos = page_height - margin_top
-                    page_number += 1
-                para.drawOn(c, margin_left, y_pos - h)
-                y_pos -= h + style.spaceAfter
-            # Write page number for the last page
-            c.setFont('Helvetica', 10)
-            c.drawString(page_width/2, 30, str(page_number))
-            c.save()
+                story.append(para)
+                story.append(Spacer(1, font_size * 0.5))
+            # Add page numbers using onPage callback
+            def add_page_number(canvas, doc):
+                canvas.setFont('Helvetica', 10)
+                canvas.drawString(page_width/2, 30, str(doc.page))
+            doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
             doc.close()
             logger.info("PDF saved successfully with original formatting")
     except Exception as e:
