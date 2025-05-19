@@ -806,11 +806,14 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             for idx, line in enumerate(formatted_lines):
                 lines_by_page[line.get('page', 0)].append((line, idx))
             num_pages = len(pdf.pages)
+            margin_top = 50
+            margin_bottom = 50
             for page_num in range(num_pages):
                 page_obj = pdf.pages[page_num]
                 page_width = page_obj.width
                 page_height = page_obj.height
                 c.setPageSize((page_width, page_height))
+                y_pos = page_height - margin_top
                 for line, idx in lines_by_page.get(page_num, []):
                     if not line['words']:
                         continue
@@ -818,12 +821,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
                     x_pos = first_word['x0']
-                    y_pos = page_height - first_word['top'] - font_size/3
                     mupdf_page = doc[page_num]
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
-                    # Use Paragraph for justification
                     style = ParagraphStyle(
                         name='Justified',
                         fontName=font_name,
@@ -836,16 +837,18 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         leftIndent=0,
                         rightIndent=0,
                     )
-                    # Use the width from the first to last word as the paragraph width
                     if len(line['words']) > 1:
                         para_width = (line['words'][-1]['x0'] + line['words'][-1]['width']) - line['words'][0]['x0']
                     else:
                         para_width = line['words'][0]['width']
                     para = Paragraph(corrected_lines[idx], style)
-                    # Draw the paragraph at the correct position
-                    # ReportLab's y is the bottom of the paragraph, so adjust for font size
-                    para.wrapOn(c, para_width, font_size * 2)
-                    para.drawOn(c, x_pos, y_pos - font_size * 0.2)
+                    w, h = para.wrap(para_width, page_height)
+                    if y_pos - h < margin_bottom:
+                        c.showPage()
+                        c.setPageSize((page_width, page_height))
+                        y_pos = page_height - margin_top
+                    para.drawOn(c, x_pos, y_pos - h)
+                    y_pos -= h
                 c.setFont('Helvetica', 10)
                 c.drawString(page_width/2, 30, str(page_num + 1))
                 if page_num < num_pages - 1:
