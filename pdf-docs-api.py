@@ -829,7 +829,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         fontName=font_name,
                         fontSize=font_size,
                         leading=font_size * 1.2,
-                        textColor=RLColor(r, g, b),
+                        textColor=Color(r, g, b),
                         alignment=TA_JUSTIFY,
                         spaceAfter=0,
                         spaceBefore=0,
