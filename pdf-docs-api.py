@@ -845,9 +845,20 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         alignment=4,
                     )
                     para_text = proofread_paragraphs[para_idx] if para_idx < len(proofread_paragraphs) else ''
-                    frame = Frame(x0, page_height - y1 - 0.25 * font_size, width, height, showBoundary=0)
                     para = Paragraph(para_text, style)
-                    frame.addFromList([para], c)
+                    frame = Frame(x0, page_height - y1 - 0.25 * font_size, width, height, showBoundary=0)
+                    # Overflow handling: split and render all content
+                    story = [para]
+                    while story:
+                        frame.addFromList(story, c)
+                        if story:  # If not all content fit, move to new frame below
+                            # Move y0 down by the height of the original box + some padding
+                            y1_new = y1 + height + 10
+                            if y1_new + height > page_height - 40:  # If not enough space, go to next page
+                                c.showPage()
+                                c.setPageSize((page_width, page_height))
+                                y1_new = 60
+                            frame = Frame(x0, page_height - y1_new - 0.25 * font_size, width, height, showBoundary=0)
                     para_idx += 1
                 # If there are extra proofread paragraphs, append them at the end of the last page
                 if page_num == num_pages - 1 and para_idx < len(proofread_paragraphs):
@@ -861,9 +872,16 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             leading=14,
                             alignment=4,
                         )
-                        frame = Frame(40, y_cursor, page_width-80, 100, showBoundary=0)
                         para = Paragraph(para_text, style)
-                        frame.addFromList([para], c)
+                        frame = Frame(40, y_cursor, page_width-80, 100, showBoundary=0)
+                        story = [para]
+                        while story:
+                            frame.addFromList(story, c)
+                            if story:
+                                c.showPage()
+                                c.setPageSize((page_width, page_height))
+                                y_cursor = 60
+                                frame = Frame(40, y_cursor, page_width-80, 100, showBoundary=0)
                         y_cursor += 110
                 for line, idx in lines_by_page.get(page_num, []):
                     if not line['words']:
