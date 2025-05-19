@@ -770,17 +770,15 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     try:
         register_fonts()
+        # Use standard letter size for output
+        doc_template = SimpleDocTemplate(
+            pdf_path,
+            pagesize=letter,
+            leftMargin=72, rightMargin=72, topMargin=72, bottomMargin=72
+        )
+        page_width, page_height = letter
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
-            first_page = pdf.pages[0]
-            page_width = first_page.width
-            page_height = first_page.height
-            # Use SimpleDocTemplate for proper flowable handling
-            doc_template = SimpleDocTemplate(
-                pdf_path,
-                pagesize=(page_width, page_height),
-                leftMargin=72, rightMargin=72, topMargin=72, bottomMargin=72
-            )
             formatted_lines = extract_text_with_formatting(original_pdf_path)
             if isinstance(text, str):
                 proofread_words = text.split()
