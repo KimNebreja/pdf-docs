@@ -788,34 +788,28 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             for idx, line in enumerate(formatted_lines):
                 lines_by_page[line.get('page', 0)].append((line, idx))
             num_pages = len(pdf.pages)
-            # If paragraph counts match, map as before. If not, do line-by-line mapping.
-            if len(proofread_paragraphs) == len(paragraphs):
-                para_idx = 0
-                for page_num in range(num_pages):
-                    page_obj = pdf.pages[page_num]
-                    page_width = page_obj.width
-                    page_height = page_obj.height
-                    c.setPageSize((page_width, page_height))
-                    for paragraph in paragraphs:
-                        if para_idx >= len(proofread_paragraphs):
-                            break
-                        if paragraph['lines'][0]['page'] != page_num:
-                            continue
-                        body_lines = [l for l in paragraph['lines'] if not (l.get('is_header') or l.get('is_footer'))]
-                        if not body_lines:
-                            para_idx += 1
-                            continue
-                        is_non_body = all(
-                            l.get('is_table') or l.get('is_header') or l.get('is_footer')
-                            for l in paragraph['lines']
-                        )
-                        # Split both original and proofread paragraph into lines
-                        orig_lines = [l['text'] for l in body_lines]
-                        proof_lines = [l for l in proofread_paragraphs[para_idx].split('\n') if l.strip()]
-                        min_lines = min(len(orig_lines), len(proof_lines))
-                        # Render each line using original formatting and position, but proofread text
-                        for i in range(min_lines):
-                            line = body_lines[i]
+            # Block-based rendering for paragraphs to preserve formatting
+            para_idx = 0
+            for page_num in range(num_pages):
+                page_obj = pdf.pages[page_num]
+                page_width = page_obj.width
+                page_height = page_obj.height
+                c.setPageSize((page_width, page_height))
+                for paragraph in paragraphs:
+                    if para_idx >= len(proofread_paragraphs):
+                        break
+                    if paragraph['lines'][0]['page'] != page_num:
+                        continue
+                    body_lines = [l for l in paragraph['lines'] if not (l.get('is_header') or l.get('is_footer'))]
+                    if not body_lines:
+                        para_idx += 1
+                        continue
+                    is_non_body = all(
+                        l.get('is_table') or l.get('is_header') or l.get('is_footer')
+                        for l in paragraph['lines']
+                    )
+                    if is_non_body:
+                        for line in paragraph['lines']:
                             if not line['words']:
                                 continue
                             first_word = line['words'][0]
@@ -829,78 +823,68 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             r, g, b = normalize_color(color) if color else (0, 0, 0)
                             c.setFont(font_name, font_size)
                             c.setFillColorRGB(r, g, b)
-                            c.drawString(x_pos, y_pos, proof_lines[i])
-                        # If there are extra proofread lines, append them below the last line
-                        if len(proof_lines) > min_lines:
-                            last_line = body_lines[-1]
-                            y_base = page_height - last_line['words'][0]['top'] - float(last_line['words'][0].get('size', 11))/3
-                            font_name = get_font_name(last_line['words'][0].get('fontname', 'Helvetica'))
-                            font_size = float(last_line['words'][0].get('size', 11))
-                            x_pos = last_line['words'][0]['x0']
-                            for j in range(min_lines, len(proof_lines)):
-                                y_base -= font_size * 1.2
-                                c.setFont(font_name, font_size)
-                                c.setFillColorRGB(0, 0, 0)
-                                c.drawString(x_pos, y_base, proof_lines[j])
+                            c.drawString(x_pos, y_pos, line['text'])
                         para_idx += 1
                         continue
-                    for line, idx in lines_by_page.get(page_num, []):
-                        if not line['words']:
-                            continue
-                        if line.get('is_table') or line.get('is_header') or line.get('is_footer'):
-                            first_word = line['words'][0]
-                            font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                            font_size = float(first_word.get('size', 11))
-                            x_pos = first_word['x0']
-                            y_pos = page_height - first_word['top'] - font_size/3
-                            mupdf_page = doc[page_num]
-                            bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
-                            color = get_text_color(mupdf_page, bbox)
-                            r, g, b = normalize_color(color) if color else (0, 0, 0)
-                            c.setFont(font_name, font_size)
-                            c.setFillColorRGB(r, g, b)
-                            c.drawString(x_pos, y_pos, line['text'])
-                    c.setFont('Helvetica', 10)
-                    c.drawString(page_width/2, 30, str(page_num + 1))
-                    if page_num < num_pages - 1:
-                        c.showPage()
-            else:
-                # Fallback: line-by-line mapping for proofread text
-                proofread_lines = []
-                for para in proofread_paragraphs:
-                    proofread_lines.extend([l for l in para.split('\n') if l.strip()])
-                orig_lines = [l for p in paragraphs for l in p['lines'] if not (l.get('is_header') or l.get('is_footer'))]
-                min_lines = min(len(proofread_lines), len(orig_lines))
-                for i in range(min_lines):
-                    line = orig_lines[i]
+                    # Use bounding box from first and last line
+                    first_line = body_lines[0]
+                    last_line = body_lines[-1]
+                    x0 = min(w['x0'] for w in first_line['words'])
+                    y0 = min(l['y_pos'] for l in body_lines)
+                    x1 = max(w['x0'] + w['width'] for w in last_line['words'])
+                    y1 = max(l['y_pos'] for l in body_lines) + last_line['words'][0]['height']
+                    width = x1 - x0
+                    height = y1 - y0 + 0.5 * (last_line['words'][0]['height'])
+                    font_name = get_font_name(first_line['words'][0].get('fontname', 'Helvetica'))
+                    font_size = float(first_line['words'][0].get('size', 11))
+                    style = ParagraphStyle(
+                        name='Justified',
+                        fontName=font_name,
+                        fontSize=font_size,
+                        leading=font_size * 1.2,
+                        alignment=4,
+                    )
+                    para_text = proofread_paragraphs[para_idx] if para_idx < len(proofread_paragraphs) else ''
+                    frame = Frame(x0, page_height - y1 - 0.25 * font_size, width, height, showBoundary=0)
+                    para = Paragraph(para_text, style)
+                    frame.addFromList([para], c)
+                    para_idx += 1
+                # If there are extra proofread paragraphs, append them at the end of the last page
+                if page_num == num_pages - 1 and para_idx < len(proofread_paragraphs):
+                    y_cursor = 60  # Start a bit above the bottom margin
+                    for extra_idx in range(para_idx, len(proofread_paragraphs)):
+                        para_text = proofread_paragraphs[extra_idx]
+                        style = ParagraphStyle(
+                            name='Justified',
+                            fontName='Helvetica',
+                            fontSize=12,
+                            leading=14,
+                            alignment=4,
+                        )
+                        frame = Frame(40, y_cursor, page_width-80, 100, showBoundary=0)
+                        para = Paragraph(para_text, style)
+                        frame.addFromList([para], c)
+                        y_cursor += 110
+                for line, idx in lines_by_page.get(page_num, []):
                     if not line['words']:
                         continue
-                    first_word = line['words'][0]
-                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                    font_size = float(first_word.get('size', 11))
-                    x_pos = first_word['x0']
-                    y_pos = page_height - first_word['top'] - font_size/3
-                    mupdf_page = doc[line['page']]
-                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
-                    color = get_text_color(mupdf_page, bbox)
-                    r, g, b = normalize_color(color) if color else (0, 0, 0)
-                    c.setFont(font_name, font_size)
-                    c.setFillColorRGB(r, g, b)
-                    c.drawString(x_pos, y_pos, proofread_lines[i])
-                # If there are extra proofread lines, append them at the end of the last page
-                if len(proofread_lines) > min_lines:
-                    last_line = orig_lines[-1]
-                    y_base = page_height - last_line['words'][0]['top'] - float(last_line['words'][0].get('size', 11))/3
-                    font_name = get_font_name(last_line['words'][0].get('fontname', 'Helvetica'))
-                    font_size = float(last_line['words'][0].get('size', 11))
-                    x_pos = last_line['words'][0]['x0']
-                    for j in range(min_lines, len(proofread_lines)):
-                        y_base -= font_size * 1.2
+                    if line.get('is_table') or line.get('is_header') or line.get('is_footer'):
+                        first_word = line['words'][0]
+                        font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                        font_size = float(first_word.get('size', 11))
+                        x_pos = first_word['x0']
+                        y_pos = page_height - first_word['top'] - font_size/3
+                        mupdf_page = doc[page_num]
+                        bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                        color = get_text_color(mupdf_page, bbox)
+                        r, g, b = normalize_color(color) if color else (0, 0, 0)
                         c.setFont(font_name, font_size)
-                        c.setFillColorRGB(0, 0, 0)
-                        c.drawString(x_pos, y_base, proofread_lines[j])
+                        c.setFillColorRGB(r, g, b)
+                        c.drawString(x_pos, y_pos, line['text'])
                 c.setFont('Helvetica', 10)
-                c.drawString(page_width/2, 30, str(num_pages))
+                c.drawString(page_width/2, 30, str(page_num + 1))
+                if page_num < num_pages - 1:
+                    c.showPage()
             c.save()
             doc.close()
             logger.info("PDF saved successfully with proofread content and original formatting")
