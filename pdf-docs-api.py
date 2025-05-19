@@ -10,7 +10,7 @@ from reportlab.lib.colors import Color
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Frame
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Frame, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 import io
 import logging
@@ -770,7 +770,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     try:
         register_fonts()
-        # Use standard letter size for output
         doc_template = SimpleDocTemplate(
             pdf_path,
             pagesize=letter,
@@ -805,47 +804,49 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             corrected_lines = []
             for start, end in line_word_indices:
                 corrected_lines.append(' '.join(corrected_words[start:end]))
-            # Group lines into paragraphs
-            lines_for_paragraphs = []
+            # Group lines by page number
+            lines_by_page = defaultdict(list)
             for i, line in enumerate(formatted_lines):
                 line = dict(line)
                 line['line_index'] = i
-                lines_for_paragraphs.append(line)
-            paragraphs = detect_paragraphs(lines_for_paragraphs)
-            para_texts = []
-            for para in paragraphs:
-                para_lines = para['lines']
-                para_indices = [l['line_index'] for l in para_lines]
-                para_text = ' '.join([corrected_lines[i] for i in para_indices])
-                para_texts.append((para_lines, para_text))
-            # Build the story for Platypus
+                lines_by_page[line.get('page', 0)].append(line)
             story = []
-            for para_lines, para_text in para_texts:
-                if not para_lines:
-                    continue
-                first_word = para_lines[0]['words'][0]
-                font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                font_size = float(first_word.get('size', 11))
-                mupdf_page = doc[para_lines[0]['page']]
-                bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
-                color = get_text_color(mupdf_page, bbox)
-                r, g, b = normalize_color(color) if color else (0, 0, 0)
-                style = ParagraphStyle(
-                    name='Justified',
-                    fontName=font_name,
-                    fontSize=font_size,
-                    leading=font_size * 1.2,
-                    textColor=Color(r, g, b),
-                    alignment=TA_JUSTIFY,
-                    spaceAfter=font_size * 0.5,
-                    spaceBefore=0,
-                    leftIndent=0,
-                    rightIndent=0,
-                )
-                para = Paragraph(para_text, style)
-                story.append(para)
-                story.append(Spacer(1, font_size * 0.5))
-            # Add page numbers using onPage callback
+            page_numbers = sorted(lines_by_page.keys())
+            for page_idx, page_num in enumerate(page_numbers):
+                page_lines = lines_by_page[page_num]
+                # Detect paragraphs for this page
+                paragraphs = detect_paragraphs(page_lines)
+                for para in paragraphs:
+                    para_lines = para['lines']
+                    para_indices = [l['line_index'] for l in para_lines]
+                    para_text = ' '.join([corrected_lines[i] for i in para_indices])
+                    if not para_lines:
+                        continue
+                    first_word = para_lines[0]['words'][0]
+                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                    font_size = float(first_word.get('size', 11))
+                    mupdf_page = doc[para_lines[0]['page']]
+                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                    color = get_text_color(mupdf_page, bbox)
+                    r, g, b = normalize_color(color) if color else (0, 0, 0)
+                    style = ParagraphStyle(
+                        name='Justified',
+                        fontName=font_name,
+                        fontSize=font_size,
+                        leading=font_size * 1.2,
+                        textColor=Color(r, g, b),
+                        alignment=TA_JUSTIFY,
+                        spaceAfter=font_size * 0.5,
+                        spaceBefore=0,
+                        leftIndent=0,
+                        rightIndent=0,
+                    )
+                    para_obj = Paragraph(para_text, style)
+                    story.append(para_obj)
+                    story.append(Spacer(1, font_size * 0.5))
+                # Add a page break after each page except the last
+                if page_idx < len(page_numbers) - 1:
+                    story.append(PageBreak())
             def add_page_number(canvas, doc):
                 canvas.setFont('Helvetica', 10)
                 canvas.drawString(page_width/2, 30, str(doc.page))
