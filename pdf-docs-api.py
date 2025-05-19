@@ -19,6 +19,7 @@ import json
 import numpy as np
 from collections import defaultdict
 import difflib
+from reportlab.lib.enums import TA_JUSTIFY
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -768,33 +769,20 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
     """
     try:
-        # Register fonts
         register_fonts()
-        
-        # Open the original PDF with both pdfplumber and PyMuPDF
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
-            
-            # Get page dimensions from the first page
             first_page = pdf.pages[0]
             page_width = first_page.width
             page_height = first_page.height
-            
-            # Create a new PDF with reportlab using exact dimensions
             c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
-            
-            # Extract text with formatting
             formatted_lines = extract_text_with_formatting(original_pdf_path)
-            
-            # Split proofread text into words (flattened)
             if isinstance(text, str):
                 proofread_words = text.split()
             else:
                 proofread_words = ' '.join(text).split()
-                
-            # Flatten original lines into words for diff
             original_words = []
-            line_word_indices = []  # (start_idx, end_idx) for each line
+            line_word_indices = []
             idx = 0
             for line in formatted_lines:
                 words = line['text'].split()
@@ -803,92 +791,65 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 end = idx
                 line_word_indices.append((start, end))
                 original_words.extend(words)
-                
-            # Use difflib to align proofread words to original words
             sm = difflib.SequenceMatcher(None, original_words, proofread_words)
-            corrected_words = list(original_words)  # start with original
+            corrected_words = list(original_words)
             opcodes = sm.get_opcodes()
             for tag, i1, i2, j1, j2 in opcodes:
                 if tag in ('replace', 'insert'):
                     corrected_words[i1:i2] = proofread_words[j1:j2]
                 elif tag == 'delete':
                     corrected_words[i1:i2] = []
-                    
-            # Group corrected words back into lines
             corrected_lines = []
             for start, end in line_word_indices:
                 corrected_lines.append(' '.join(corrected_words[start:end]))
-                
-            # Group lines by page number
             lines_by_page = defaultdict(list)
             for idx, line in enumerate(formatted_lines):
                 lines_by_page[line.get('page', 0)].append((line, idx))
-                
             num_pages = len(pdf.pages)
             for page_num in range(num_pages):
                 page_obj = pdf.pages[page_num]
                 page_width = page_obj.width
                 page_height = page_obj.height
                 c.setPageSize((page_width, page_height))
-                
-                # Process each line on the page
                 for line, idx in lines_by_page.get(page_num, []):
                     if not line['words']:
                         continue
-                        
-                    # Get formatting information from the first word
                     first_word = line['words'][0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
-                    
-                    # Calculate text position
                     x_pos = first_word['x0']
                     y_pos = page_height - first_word['top'] - font_size/3
-                    
-                    # Get text color
                     mupdf_page = doc[page_num]
-                    bbox = fitz.Rect(first_word['x0'], first_word['top'], 
-                                   first_word['x0'] + first_word['width'], 
-                                   first_word['bottom'])
+                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
-                    
-                    # Set font and color
-                    c.setFont(font_name, font_size)
-                    c.setFillColorRGB(r, g, b)
-                    
-                    # Calculate text alignment
-                    line_width = sum(word['width'] for word in line['words'])
-                    if line_width > 0:
-                        # Calculate word spacing
-                        total_space = line['words'][-1]['x0'] + line['words'][-1]['width'] - line['words'][0]['x0']
-                        word_count = len(line['words'])
-                        if word_count > 1:
-                            space_width = (total_space - line_width) / (word_count - 1)
-                        else:
-                            space_width = 0
-                            
-                        # Draw text with proper spacing
-                        current_x = x_pos
-                        words = corrected_lines[idx].split()
-                        for i, word in enumerate(words):
-                            # Draw the word
-                            c.drawString(current_x, y_pos, word)
-                            
-                            # Add space if not the last word
-                            if i < len(words) - 1:
-                                current_x += c.stringWidth(word, font_name, font_size) + space_width
+                    # Use Paragraph for justification
+                    style = ParagraphStyle(
+                        name='Justified',
+                        fontName=font_name,
+                        fontSize=font_size,
+                        leading=font_size * 1.2,
+                        textColor=RLColor(r, g, b),
+                        alignment=TA_JUSTIFY,
+                        spaceAfter=0,
+                        spaceBefore=0,
+                        leftIndent=0,
+                        rightIndent=0,
+                    )
+                    # Use the width from the first to last word as the paragraph width
+                    if len(line['words']) > 1:
+                        para_width = (line['words'][-1]['x0'] + line['words'][-1]['width']) - line['words'][0]['x0']
                     else:
-                        # If no width information, draw as is
-                        c.drawString(x_pos, y_pos, corrected_lines[idx])
-                
-                # Add page number
+                        para_width = line['words'][0]['width']
+                    para = Paragraph(corrected_lines[idx], style)
+                    # Draw the paragraph at the correct position
+                    # ReportLab's y is the bottom of the paragraph, so adjust for font size
+                    para.wrapOn(c, para_width, font_size * 2)
+                    para.drawOn(c, x_pos, y_pos - font_size * 0.2)
                 c.setFont('Helvetica', 10)
                 c.drawString(page_width/2, 30, str(page_num + 1))
-                
                 if page_num < num_pages - 1:
                     c.showPage()
-                    
             c.save()
             doc.close()
             logger.info("PDF saved successfully with original formatting")
