@@ -803,29 +803,25 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             for start, end in line_word_indices:
                 corrected_lines.append(' '.join(corrected_words[start:end]))
             # Group lines into paragraphs
-            # Use detect_paragraphs to get paragraph groupings
             lines_for_paragraphs = []
             for i, line in enumerate(formatted_lines):
-                # Add line_index for detect_paragraphs
                 line = dict(line)
                 line['line_index'] = i
                 lines_for_paragraphs.append(line)
             paragraphs = detect_paragraphs(lines_for_paragraphs)
-            # Build proofread text for each paragraph
             para_texts = []
             for para in paragraphs:
                 para_lines = para['lines']
                 para_indices = [l['line_index'] for l in para_lines]
                 para_text = ' '.join([corrected_lines[i] for i in para_indices])
                 para_texts.append((para_lines, para_text))
-            # Set margins
             margin_left = 72  # 1 inch
             margin_right = 72
             margin_top = 72
             margin_bottom = 72
             usable_width = page_width - margin_left - margin_right
             y_pos = page_height - margin_top
-            # Use font and size from first line of each paragraph
+            page_number = 1
             for para_lines, para_text in para_texts:
                 if not para_lines:
                     continue
@@ -851,13 +847,18 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 para = Paragraph(para_text, style)
                 w, h = para.wrap(usable_width, page_height)
                 if y_pos - h < margin_bottom:
+                    # Write page number before starting new page
+                    c.setFont('Helvetica', 10)
+                    c.drawString(page_width/2, 30, str(page_number))
                     c.showPage()
                     c.setPageSize((page_width, page_height))
                     y_pos = page_height - margin_top
+                    page_number += 1
                 para.drawOn(c, margin_left, y_pos - h)
                 y_pos -= h + style.spaceAfter
+            # Write page number for the last page
             c.setFont('Helvetica', 10)
-            c.drawString(page_width/2, 30, '1')  # Only one page number for now
+            c.drawString(page_width/2, 30, str(page_number))
             c.save()
             doc.close()
             logger.info("PDF saved successfully with original formatting")
