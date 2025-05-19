@@ -802,57 +802,62 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             corrected_lines = []
             for start, end in line_word_indices:
                 corrected_lines.append(' '.join(corrected_words[start:end]))
-            lines_by_page = defaultdict(list)
-            for idx, line in enumerate(formatted_lines):
-                lines_by_page[line.get('page', 0)].append((line, idx))
-            num_pages = len(pdf.pages)
-            margin_top = 50
-            margin_bottom = 50
-            for page_num in range(num_pages):
-                page_obj = pdf.pages[page_num]
-                page_width = page_obj.width
-                page_height = page_obj.height
-                c.setPageSize((page_width, page_height))
-                y_pos = page_height - margin_top
-                for line, idx in lines_by_page.get(page_num, []):
-                    if not line['words']:
-                        continue
-                    first_word = line['words'][0]
-                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                    font_size = float(first_word.get('size', 11))
-                    x_pos = first_word['x0']
-                    mupdf_page = doc[page_num]
-                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
-                    color = get_text_color(mupdf_page, bbox)
-                    r, g, b = normalize_color(color) if color else (0, 0, 0)
-                    style = ParagraphStyle(
-                        name='Justified',
-                        fontName=font_name,
-                        fontSize=font_size,
-                        leading=font_size * 1.2,
-                        textColor=Color(r, g, b),
-                        alignment=TA_JUSTIFY,
-                        spaceAfter=0,
-                        spaceBefore=0,
-                        leftIndent=0,
-                        rightIndent=0,
-                    )
-                    if len(line['words']) > 1:
-                        para_width = (line['words'][-1]['x0'] + line['words'][-1]['width']) - line['words'][0]['x0']
-                    else:
-                        para_width = line['words'][0]['width']
-                    para = Paragraph(corrected_lines[idx], style)
-                    w, h = para.wrap(para_width, page_height)
-                    if y_pos - h < margin_bottom:
-                        c.showPage()
-                        c.setPageSize((page_width, page_height))
-                        y_pos = page_height - margin_top
-                    para.drawOn(c, x_pos, y_pos - h)
-                    y_pos -= h
-                c.setFont('Helvetica', 10)
-                c.drawString(page_width/2, 30, str(page_num + 1))
-                if page_num < num_pages - 1:
+            # Group lines into paragraphs
+            # Use detect_paragraphs to get paragraph groupings
+            lines_for_paragraphs = []
+            for i, line in enumerate(formatted_lines):
+                # Add line_index for detect_paragraphs
+                line = dict(line)
+                line['line_index'] = i
+                lines_for_paragraphs.append(line)
+            paragraphs = detect_paragraphs(lines_for_paragraphs)
+            # Build proofread text for each paragraph
+            para_texts = []
+            for para in paragraphs:
+                para_lines = para['lines']
+                para_indices = [l['line_index'] for l in para_lines]
+                para_text = ' '.join([corrected_lines[i] for i in para_indices])
+                para_texts.append((para_lines, para_text))
+            # Set margins
+            margin_left = 72  # 1 inch
+            margin_right = 72
+            margin_top = 72
+            margin_bottom = 72
+            usable_width = page_width - margin_left - margin_right
+            y_pos = page_height - margin_top
+            # Use font and size from first line of each paragraph
+            for para_lines, para_text in para_texts:
+                if not para_lines:
+                    continue
+                first_word = para_lines[0]['words'][0]
+                font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                font_size = float(first_word.get('size', 11))
+                mupdf_page = doc[para_lines[0]['page']]
+                bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                color = get_text_color(mupdf_page, bbox)
+                r, g, b = normalize_color(color) if color else (0, 0, 0)
+                style = ParagraphStyle(
+                    name='Justified',
+                    fontName=font_name,
+                    fontSize=font_size,
+                    leading=font_size * 1.2,
+                    textColor=Color(r, g, b),
+                    alignment=TA_JUSTIFY,
+                    spaceAfter=font_size * 0.5,
+                    spaceBefore=0,
+                    leftIndent=0,
+                    rightIndent=0,
+                )
+                para = Paragraph(para_text, style)
+                w, h = para.wrap(usable_width, page_height)
+                if y_pos - h < margin_bottom:
                     c.showPage()
+                    c.setPageSize((page_width, page_height))
+                    y_pos = page_height - margin_top
+                para.drawOn(c, margin_left, y_pos - h)
+                y_pos -= h + style.spaceAfter
+            c.setFont('Helvetica', 10)
+            c.drawString(page_width/2, 30, '1')  # Only one page number for now
             c.save()
             doc.close()
             logger.info("PDF saved successfully with original formatting")
