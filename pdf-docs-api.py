@@ -302,7 +302,7 @@ def detect_lists(lines):
                     # Check if this line is a continuation of the previous list item
                     if (i > 0 and 
                         lines[i-1]['text'].strip() and 
-                        line.get('indentation', 0) > current_list['indentation']):
+                        line['indentation'] > current_list['indentation']):
                         # This is a continuation of the previous list item
                         current_list['items'][-1]['text'] += ' ' + text
                     else:
@@ -688,9 +688,10 @@ def extract_text_with_formatting(pdf_path):
                 sorted_lines = sorted(lines.items(), key=lambda x: x[0])
                 
                 # Process each line
-                for line_num, (y_pos, line_words) in enumerate(sorted_lines):
+                for y_pos, line_words in sorted_lines:
                     # Sort words in line by x-position (left to right)
                     line_words.sort(key=lambda x: x['x0'])
+                    
                     # Create a line object with formatting
                     line_obj = {
                         'text': ' '.join([w['text'] for w in line_words]),
@@ -700,8 +701,7 @@ def extract_text_with_formatting(pdf_path):
                         'is_table': False,
                         'is_column': False,
                         'is_header': False,
-                        'is_footer': False,
-                        'line_index': line_num
+                        'is_footer': False
                     }
                     
                     # Check if this line is part of a table
@@ -768,144 +768,84 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
     """
     try:
+        # Register fonts
         register_fonts()
+        
+        # Open the original PDF with both pdfplumber and PyMuPDF
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
+            
+            # Get page dimensions from the first page
             first_page = pdf.pages[0]
             page_width = first_page.width
             page_height = first_page.height
+            
+            # Create a new PDF with reportlab using exact dimensions
             c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
+            
+            # Extract text with formatting
             formatted_lines = extract_text_with_formatting(original_pdf_path)
-            paragraphs = detect_paragraphs(formatted_lines)
-            # Split proofread text into paragraphs using double newlines or blank lines
+            # Split proofread text into words (flattened)
             if isinstance(text, str):
-                proofread_paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
+                proofread_words = text.split()
             else:
-                proofread_paragraphs = [p.strip() for p in text if p.strip()]
-            # Use proofread paragraphs in order, never fallback to original
-            min_len = min(len(paragraphs), len(proofread_paragraphs))
+                proofread_words = ' '.join(text).split()
+            # Flatten original lines into words for diff
+            original_words = []
+            line_word_indices = []  # (start_idx, end_idx) for each line
+            idx = 0
+            for line in formatted_lines:
+                words = line['text'].split()
+                start = idx
+                idx += len(words)
+                end = idx
+                line_word_indices.append((start, end))
+                original_words.extend(words)
+            # Use difflib to align proofread words to original words
+            sm = difflib.SequenceMatcher(None, original_words, proofread_words)
+            corrected_words = list(original_words)  # start with original
+            opcodes = sm.get_opcodes()
+            for tag, i1, i2, j1, j2 in opcodes:
+                if tag in ('replace', 'insert'):
+                    corrected_words[i1:i2] = proofread_words[j1:j2]
+                elif tag == 'delete':
+                    corrected_words[i1:i2] = []
+            # Group corrected words back into lines
+            corrected_lines = []
+            for start, end in line_word_indices:
+                corrected_lines.append(' '.join(corrected_words[start:end]))
+            # Group lines by page number
             lines_by_page = defaultdict(list)
             for idx, line in enumerate(formatted_lines):
                 lines_by_page[line.get('page', 0)].append((line, idx))
             num_pages = len(pdf.pages)
-            # Block-based rendering for paragraphs to preserve formatting
-            para_idx = 0
             for page_num in range(num_pages):
                 page_obj = pdf.pages[page_num]
                 page_width = page_obj.width
                 page_height = page_obj.height
                 c.setPageSize((page_width, page_height))
-                for paragraph in paragraphs:
-                    if para_idx >= len(proofread_paragraphs):
-                        break
-                    if paragraph['lines'][0]['page'] != page_num:
-                        continue
-                    body_lines = [l for l in paragraph['lines'] if not (l.get('is_header') or l.get('is_footer'))]
-                    if not body_lines:
-                        para_idx += 1
-                        continue
-                    is_non_body = all(
-                        l.get('is_table') or l.get('is_header') or l.get('is_footer')
-                        for l in paragraph['lines']
-                    )
-                    if is_non_body:
-                        for line in paragraph['lines']:
-                            if not line['words']:
-                                continue
-                            first_word = line['words'][0]
-                            font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                            font_size = float(first_word.get('size', 11))
-                            x_pos = first_word['x0']
-                            y_pos = page_height - first_word['top'] - font_size/3
-                            mupdf_page = doc[page_num]
-                            bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
-                            color = get_text_color(mupdf_page, bbox)
-                            r, g, b = normalize_color(color) if color else (0, 0, 0)
-                            c.setFont(font_name, font_size)
-                            c.setFillColorRGB(r, g, b)
-                            c.drawString(x_pos, y_pos, line['text'])
-                        para_idx += 1
-                        continue
-                    # Use bounding box from first and last line
-                    first_line = body_lines[0]
-                    last_line = body_lines[-1]
-                    x0 = min(w['x0'] for w in first_line['words'])
-                    y0 = min(l['y_pos'] for l in body_lines)
-                    x1 = max(w['x0'] + w['width'] for w in last_line['words'])
-                    y1 = max(l['y_pos'] for l in body_lines) + last_line['words'][0]['height']
-                    width = x1 - x0
-                    height = y1 - y0 + 0.5 * (last_line['words'][0]['height'])
-                    font_name = get_font_name(first_line['words'][0].get('fontname', 'Helvetica'))
-                    font_size = float(first_line['words'][0].get('size', 11))
-                    style = ParagraphStyle(
-                        name='Justified',
-                        fontName=font_name,
-                        fontSize=font_size,
-                        leading=font_size * 1.2,
-                        alignment=4,
-                    )
-                    para_text = proofread_paragraphs[para_idx] if para_idx < len(proofread_paragraphs) else ''
-                    para = Paragraph(para_text, style)
-                    frame = Frame(x0, page_height - y1 - 0.25 * font_size, width, height, showBoundary=0)
-                    # Overflow handling: split and render all content
-                    story = [para]
-                    while story:
-                        frame.addFromList(story, c)
-                        if story:  # If not all content fit, move to new frame below
-                            # Move y0 down by the height of the original box + some padding
-                            y1_new = y1 + height + 10
-                            if y1_new + height > page_height - 40:  # If not enough space, go to next page
-                                c.showPage()
-                                c.setPageSize((page_width, page_height))
-                                y1_new = 60
-                            frame = Frame(x0, page_height - y1_new - 0.25 * font_size, width, height, showBoundary=0)
-                    para_idx += 1
-                # If there are extra proofread paragraphs, append them at the end of the last page
-                if page_num == num_pages - 1 and para_idx < len(proofread_paragraphs):
-                    y_cursor = 60  # Start a bit above the bottom margin
-                    for extra_idx in range(para_idx, len(proofread_paragraphs)):
-                        para_text = proofread_paragraphs[extra_idx]
-                        style = ParagraphStyle(
-                            name='Justified',
-                            fontName='Helvetica',
-                            fontSize=12,
-                            leading=14,
-                            alignment=4,
-                        )
-                        para = Paragraph(para_text, style)
-                        frame = Frame(40, y_cursor, page_width-80, 100, showBoundary=0)
-                        story = [para]
-                        while story:
-                            frame.addFromList(story, c)
-                            if story:
-                                c.showPage()
-                                c.setPageSize((page_width, page_height))
-                                y_cursor = 60
-                                frame = Frame(40, y_cursor, page_width-80, 100, showBoundary=0)
-                        y_cursor += 110
                 for line, idx in lines_by_page.get(page_num, []):
                     if not line['words']:
                         continue
-                    if line.get('is_table') or line.get('is_header') or line.get('is_footer'):
-                        first_word = line['words'][0]
-                        font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                        font_size = float(first_word.get('size', 11))
-                        x_pos = first_word['x0']
-                        y_pos = page_height - first_word['top'] - font_size/3
-                        mupdf_page = doc[page_num]
-                        bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
-                        color = get_text_color(mupdf_page, bbox)
-                        r, g, b = normalize_color(color) if color else (0, 0, 0)
-                        c.setFont(font_name, font_size)
-                        c.setFillColorRGB(r, g, b)
-                        c.drawString(x_pos, y_pos, line['text'])
+                    first_word = line['words'][0]
+                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                    font_size = float(first_word.get('size', 11))
+                    x_pos = first_word['x0']
+                    y_pos = page_height - first_word['top'] - font_size/3
+                    mupdf_page = doc[page_num]
+                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                    color = get_text_color(mupdf_page, bbox)
+                    r, g, b = normalize_color(color) if color else (0, 0, 0)
+                    c.setFont(font_name, font_size)
+                    c.setFillColorRGB(r, g, b)
+                    c.drawString(x_pos, y_pos, corrected_lines[idx])
                 c.setFont('Helvetica', 10)
                 c.drawString(page_width/2, 30, str(page_num + 1))
                 if page_num < num_pages - 1:
                     c.showPage()
             c.save()
             doc.close()
-            logger.info("PDF saved successfully with proofread content and original formatting")
+            logger.info("PDF saved successfully with original formatting")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
@@ -921,25 +861,40 @@ def convert_and_proofread():
         if 'text' in request.form:
             proofread_text_content = request.form['text']
             original_filename = request.form.get('filename', 'document.pdf')
+            
+            # Store the original file path in a session-like dictionary
             original_pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
+            
+            # Ensure the original file exists
             if not os.path.exists(original_pdf_path):
+                # Try to find the file with "proofread_" prefix removed
                 base_filename = original_filename.replace("proofread_", "", 1)
                 original_pdf_path = os.path.join(UPLOAD_FOLDER, base_filename)
+                
                 if not os.path.exists(original_pdf_path):
                     return jsonify({"error": "Original file not found"}), 404
+            
+            # Get selected suggestions
             selected_suggestions = {}
             if 'selected_suggestions' in request.form:
                 try:
                     selected_suggestions = dict(json.loads(request.form['selected_suggestions']))
+                    # Apply selected suggestions
                     for original_word, selected_word in selected_suggestions.items():
-                        proofread_text_content = re.sub(rf'\b{re.escape(original_word)}\b', selected_word, proofread_text_content, flags=re.IGNORECASE)
+                        proofread_text_content = proofread_text_content.replace(original_word, selected_word)
                 except Exception as e:
                     logger.warning(f"Failed to parse selected suggestions: {str(e)}")
-            logger.info(f"Using proofread text for PDF: {proofread_text_content[:200]}...")
-            output_filename = "proofread_" + original_filename.replace("proofread_", "", 1)
+
+            # Generate PDF with the updated text
+            output_filename = "proofread_" + original_filename.replace("proofread_", "", 1)  # Avoid duplicate prefix
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
+            
+            # Use the original PDF as a template for formatting
             save_text_to_pdf(proofread_text_content, output_path, original_pdf_path)
-            return jsonify({"download_url": "/download/" + output_filename})
+            
+            return jsonify({
+                "download_url": "/download/" + output_filename
+            })
 
         # Handle file upload case
         file = request.files['file']
