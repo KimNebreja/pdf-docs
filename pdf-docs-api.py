@@ -724,7 +724,8 @@ def extract_text_with_formatting(pdf_path):
                         # Include formatting details from the first word as a summary for the line
                         'fontname': line_info['words'][0].get('fontname') if line_info['words'] else None,
                         'size': line_info['words'][0].get('size') if line_info['words'] else None,
-                        'color': line_info['words'][0].get('color') if line_info['words'] else None,
+                        # Safely get color, ensuring it's not the problematic string 'color'
+                        'color': line_info['words'][0].get('color') if line_info['words'] and line_info['words'][0].get('color') != 'color' else None,
                          'is_table': False, # Placeholder, need more sophisticated detection/handling
                          'is_column': False, # Placeholder
                          'is_header': False, # Placeholder
