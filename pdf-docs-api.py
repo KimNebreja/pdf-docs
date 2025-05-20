@@ -448,20 +448,20 @@ def normalize_color(color):
     """
     try:
         if color is None:
-            return (0, 0, 0)  # Default to black
-            
+            return (0.0, 0.0, 0.0)  # Default to black as floats
+
         # If color is already a tuple/list of RGB values (0-1 range)
-        if isinstance(color, (tuple, list)) and len(color) >= 3 and all(0.0 <= c <= 1.0 for c in color[:3]):
-             return tuple(float(c) for c in color[:3]) # Return directly if already in 0-1 range
+        if isinstance(color, (tuple, list)) and len(color) >= 3 and all(isinstance(c, (int, float)) and 0.0 <= c <= 1.0 for c in color[:3]):
+             return tuple(float(c) for c in color[:3]) # Return directly if already in 0-1 range and valid
 
         # If color is a tuple/list of RGB values (0-255 range)
-        if isinstance(color, (tuple, list)) and len(color) >= 3 and all(0 <= c <= 255 for c in color[:3]):
-             return (float(color[0]) / 255, float(color[1]) / 255, float(color[2]) / 255)
+        if isinstance(color, (tuple, list)) and len(color) >= 3 and all(isinstance(c, (int, float)) and 0 <= c <= 255 for c in color[:3]):
+             return (float(color[0]) / 255.0, float(color[1]) / 255.0, float(color[2]) / 255.0)
 
 
         # If color is a single value (grayscale 0-255 or 0-1)
         if isinstance(color, (int, float)):
-            val = float(color) / 255 if color > 1 else float(color)
+            val = float(color) / 255.0 if color > 1 else float(color)
             val = max(0.0, min(1.0, val))
             return (val, val, val)
 
@@ -481,7 +481,6 @@ def normalize_color(color):
                 b = int(color[2]*2, 16) / 255.0
                 return (r, g, b)
 
-
         # If color is a CMYK value
         if isinstance(color, (tuple, list)) and len(color) == 4:
             c, m, y, k = color
@@ -493,12 +492,13 @@ def normalize_color(color):
             b = 1 - min(1, y * (1 - k) + k)
             return (r, g, b)
 
-        # Default to black for unknown types
-        logger.warning(f"Unknown color format: {color}")
-        return (0, 0, 0)
+        # Explicitly handle the case where the input is the string 'color' or other unexpected types
+        logger.warning(f"Unexpected color format received: {color} (Type: {type(color)}). Returning default black.")
+        return (0.0, 0.0, 0.0) # Return default black as floats for safety
+
     except Exception as e:
-        logger.warning(f"Error normalizing color {color}: {str(e)}")
-        return (0, 0, 0)  # Default to black on error
+        logger.warning(f"Error normalizing color {color} (Type: {type(color)}): {str(e)}. Returning default black.")
+        return (0.0, 0.0, 0.0)  # Default to black on error
 
 def get_font_name(font_name):
     """Normalizes font names with advanced mapping and fallback mechanism."""
