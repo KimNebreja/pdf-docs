@@ -830,29 +830,17 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     if not para_lines:
                         continue
 
-                    # Calculate the average x0 for lines in this paragraph as a basis for left indent
-                    total_x0 = 0
-                    word_count_in_para = 0
+                    # Calculate the minimum x0 for this paragraph
                     min_x0 = float('inf')
                     max_x1 = float('-inf')
 
                     for line in para_lines:
-                        if line['words']:
-                            total_x0 += line['words'][0]['x0']
+                        if line['words']: # Ensure line is not empty
                             min_x0 = min(min_x0, line['words'][0]['x0'])
                             max_x1 = max(max_x1, line['words'][-1]['x0'] + line['words'][-1]['width'])
-                            word_count_in_para += len(line['words'])
 
-                    if word_count_in_para == 0:
-                        continue # Skip if no words in paragraph
-
-                    # Use the minimum x0 for the paragraph's starting point
-                    # Calculate left indent relative to the document's left margin
-                    left_indent = max(0, min_x0 - doc_template.leftMargin)
-
-                     # Calculate right indent relative to the document's right margin
-                     # Use the overall page width and right margin as references
-                    right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
+                    if min_x0 == float('inf') or max_x1 == float('-inf'):
+                         continue # Skip if no words found in paragraph lines
 
 
                     first_word = para_lines[0]['words'][0]
@@ -863,6 +851,20 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
+
+                    # Calculate left indent directly from the minimum x0
+                    # This assumes the template's left margin is the base
+                    left_indent = max(0, min_x0 - doc_template.leftMargin)
+
+                    # Calculate right indent from the right edge of the text block to the right margin
+                    right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
+
+                    # Ensure effective width is positive - this check might be overly cautious
+                    # effective_width = page_width - doc_template.leftMargin - doc_template.rightMargin - left_indent - right_indent
+                    # if effective_width <= 0:
+                    #      left_indent = max(0, min_x0 - doc_template.leftMargin) # Re-calculate if needed
+                    #      right_indent = 0 # Reset right indent if it caused negative width
+
 
                     style = ParagraphStyle(
                         name='JustifiedWithAdaptingIndent',
