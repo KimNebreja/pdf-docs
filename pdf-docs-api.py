@@ -807,27 +807,23 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             for start, end in line_word_indices:
                 corrected_lines.append(' '.join(corrected_words[start:end]))
 
-            # Find the most common starting x0 position to estimate the base left margin
-            x0_starts = []
-            for line in formatted_lines:
-                if line['words']:
-                    x0_starts.append(round(line['words'][0]['x0'], 2)) # Round to handle floating point
-
-            if not x0_starts:
-                base_original_left_margin_x0 = doc_template.leftMargin # Default if no text
-            else:
-                # Find the most frequent x0
-                from collections import Counter
-                x0_counts = Counter(x0_starts)
-                base_original_left_margin_x0 = x0_counts.most_common(1)[0][0]
-
-
             # Group lines by page number
             lines_by_page = defaultdict(list)
             for i, line in enumerate(formatted_lines):
                 line = dict(line)
                 line['line_index'] = i
                 lines_by_page[line.get('page', 0)].append(line)
+
+            # --- Determine the baseline left margin from the first page's first paragraph ---
+            base_original_left_margin_x0 = doc_template.leftMargin # Default value
+
+            first_page_paragraphs = detect_paragraphs(lines_by_page.get(0, [])) # Get paragraphs from the first page
+            if first_page_paragraphs and first_page_paragraphs[0]['lines'] and first_page_paragraphs[0]['lines'][0]['words']:
+                 # Use the x0 of the first word of the first paragraph on the first page as the baseline
+                 base_original_left_margin_x0 = first_page_paragraphs[0]['lines'][0]['words'][0]['x0']
+
+            # --- End of baseline determination ---
+
 
             story = []
             page_numbers = sorted(lines_by_page.keys())
@@ -867,12 +863,13 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
 
-                    # Calculate left indent relative to the *most common* starting x0
+                    # Calculate left indent relative to the established baseline
                     # This is the additional indent beyond the base margin
                     left_indent = max(0, min_x0 - base_original_left_margin_x0)
 
                     # Calculate right indent from the right edge of the text block to the right margin
                     right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
+
 
                     # Calculate first line indent if it differs from the paragraph's overall left indent
                     # This is relative to the paragraph's calculated left indent
