@@ -842,7 +842,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     if min_x0 == float('inf') or max_x1 == float('-inf'):
                          continue # Skip if no words found in paragraph lines
 
-
                     first_word = para_lines[0]['words'][0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
@@ -852,34 +851,50 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
 
-                    # Calculate left indent directly from the minimum x0
-                    # This assumes the template's left margin is the base
+                    # Calculate left indent based on the paragraph's minimum x0 relative to the margin
                     left_indent = max(0, min_x0 - doc_template.leftMargin)
 
                     # Calculate right indent from the right edge of the text block to the right margin
                     right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
 
-                    # Ensure effective width is positive - this check might be overly cautious
-                    # effective_width = page_width - doc_template.leftMargin - doc_template.rightMargin - left_indent - right_indent
-                    # if effective_width <= 0:
-                    #      left_indent = max(0, min_x0 - doc_template.leftMargin) # Re-calculate if needed
-                    #      right_indent = 0 # Reset right indent if it caused negative width
+                    # Calculate first line indent if it differs from the paragraph's overall left indent
+                    first_line_x0 = para_lines[0]['words'][0]['x0'] if para_lines[0]['words'] else min_x0
+                    first_line_indent = max(0, first_line_x0 - min_x0) # Indent relative to paragraph's left edge
 
+                    # Adjust left indent if the first line indent is significantly different
+                    # This is a heuristic and might need tuning
+                    if first_line_indent > font_size * 0.5: # If first line is indented by more than half a font size
+                         # Treat it as a first line indent
+                         calculated_first_line_indent = max(0, first_line_x0 - doc_template.leftMargin - left_indent)
+                         style = ParagraphStyle(
+                              name='JustifiedWithFirstLineIndent',
+                              fontName=font_name,
+                              fontSize=font_size,
+                              leading=font_size * 1.2,
+                              textColor=Color(r, g, b),
+                              alignment=TA_JUSTIFY,
+                              spaceAfter=font_size * 0.5,
+                              spaceBefore=0,
+                              leftIndent=left_indent, # Apply the overall block indent
+                              rightIndent=right_indent,
+                              firstLineIndent=calculated_first_line_indent, # Apply calculated first line indent
+                         )
+                    else:
+                        # Otherwise, assume it's a regular block indent or no indent
+                         style = ParagraphStyle(
+                              name='JustifiedWithBlockIndent',
+                              fontName=font_name,
+                              fontSize=font_size,
+                              leading=font_size * 1.2,
+                              textColor=Color(r, g, b),
+                              alignment=TA_JUSTIFY,
+                              spaceAfter=font_size * 0.5,
+                              spaceBefore=0,
+                              leftIndent=left_indent, # Apply the calculated left indent
+                              rightIndent=right_indent, # Apply the calculated right indent
+                              firstLineIndent=0, # No special first line indent
+                         )
 
-                    style = ParagraphStyle(
-                        name='JustifiedWithAdaptingIndent',
-                        fontName=font_name,
-                        fontSize=font_size,
-                        leading=font_size * 1.2,
-                        textColor=Color(r, g, b),
-                        alignment=TA_JUSTIFY,
-                        spaceAfter=font_size * 0.5,
-                        spaceBefore=0,
-                        leftIndent=left_indent, # Apply the calculated left indent
-                        rightIndent=right_indent, # Apply the calculated right indent
-                        # Consider firstLineIndent if needed for specific paragraph styles
-                        firstLineIndent=0, # You might need to detect and set this based on first line x0 vs min_x0
-                    )
 
                     para_obj = Paragraph(para_text, style)
                     story.append(para_obj)
