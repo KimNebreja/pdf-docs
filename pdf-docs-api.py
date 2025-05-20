@@ -339,32 +339,50 @@ def detect_paragraphs(lines):
             if i > 0 and line['y_pos'] - lines[i-1]['y_pos'] > lines[i-1]['words'][0]['height'] * 2:
                 is_new_paragraph = True
                 
-            # Check for indentation
-            if i > 0 and line['words'][0]['x0'] > lines[i-1]['words'][0]['x0'] + 20:
-                is_new_paragraph = True
-                
-            # Check for different formatting (font, size, color)
+            # Check for indentation of the first line relative to the previous line
+            if i > 0 and line['words'] and lines[i-1]['words']:
+                 # Calculate the horizontal difference between the start of the current and previous line
+                 horizontal_diff = line['words'][0]['x0'] - lines[i-1]['words'][0]['x0']
+                 # Consider it a new paragraph if indented significantly more than previous line
+                 if horizontal_diff > 10 and len(current_paragraph) > 0: # Threshold of 10 points
+                     is_new_paragraph = True
+                 # Also consider it a new paragraph if the previous line was indented more and this one less (outdent)
+                 if horizontal_diff < -10 and len(current_paragraph) > 0: # Threshold of 10 points
+                      is_new_paragraph = True
+
+
+            # Check for different formatting (font, size, color) - this logic was commented out but is important
+            # Re-adding basic check for formatting changes as a potential paragraph break
             if i > 0 and len(current_paragraph) > 0:
-                prev_word = current_paragraph[-1]['words'][0]
-                curr_word = line['words'][0]
-                
-                if (prev_word.get('fontname') != curr_word.get('fontname') or
-                    abs(prev_word.get('size', 0) - curr_word.get('size', 0)) > 2):
-                    is_new_paragraph = True
-                    
+                prev_line_first_word = current_paragraph[-1]['words'][0] if current_paragraph[-1]['words'] else None
+                curr_line_first_word = line['words'][0] if line['words'] else None
+
+                if prev_line_first_word and curr_line_first_word:
+                    # Check font name or size change
+                    if (prev_line_first_word.get('fontname') != curr_line_first_word.get('fontname') or
+                        abs(prev_line_first_word.get('size', 0) - curr_line_first_word.get('size', 0)) > 1): # Use smaller threshold
+                        is_new_paragraph = True
+                    # Basic color check (more precise color check is in get_text_color)
+                    # You might need a more sophisticated color comparison here if needed
+                    # if prev_line_first_word.get('color') != curr_line_first_word.get('color'):
+                    #      is_new_paragraph = True
+
+
             # If this is a new paragraph, save the current one and start a new one
             if is_new_paragraph and current_paragraph:
-                paragraphs.append({
-                    'lines': current_paragraph,
-                    'text': ' '.join([l['text'] for l in current_paragraph])
-                })
+                # Ensure the current paragraph is not just empty lines
+                if any(line['text'].strip() for line in current_paragraph):
+                    paragraphs.append({
+                        'lines': current_paragraph,
+                        'text': ' '.join([l['text'] for l in current_paragraph])
+                    })
                 current_paragraph = []
                 
             # Add this line to the current paragraph
             current_paragraph.append(line)
             
-        # Add the last paragraph
-        if current_paragraph:
+        # Add the last paragraph if it's not empty
+        if current_paragraph and any(line['text'].strip() for line in current_paragraph):
             paragraphs.append({
                 'lines': current_paragraph,
                 'text': ' '.join([l['text'] for l in current_paragraph])
@@ -373,6 +391,7 @@ def detect_paragraphs(lines):
         return paragraphs
     except Exception as e:
         logger.warning(f"Error detecting paragraphs: {str(e)}")
+        # Fallback: return all lines as a single paragraph if detection fails
         return [{'lines': lines, 'text': ' '.join([l['text'] for l in lines])}]
 
 def get_text_color(page, bbox):
@@ -387,6 +406,10 @@ def get_text_color(page, bbox):
                         for span in line["spans"]:
                             # Check for multiple color attributes with priority
                             if "color" in span:
+                                # Convert integer color to hex string if needed
+                                if isinstance(span["color"], int):
+                                     # This is a heuristic, assuming typical sRGB integer colors
+                                     return f'#{span["color"]:06x}'
                                 return span["color"]
                             elif "fill" in span:
                                 return span["fill"]
@@ -427,44 +450,51 @@ def normalize_color(color):
         if color is None:
             return (0, 0, 0)  # Default to black
             
-        # If color is already a tuple/list of RGB values
-        if isinstance(color, (tuple, list)):
-            if len(color) >= 3:
-                # Convert to range 0-1 if needed
-                r = float(color[0]) / 255 if color[0] > 1 else float(color[0])
-                g = float(color[1]) / 255 if color[1] > 1 else float(color[1])
-                b = float(color[2]) / 255 if color[2] > 1 else float(color[2])
-                # Ensure values are in range 0-1
-                r = max(0.0, min(1.0, r))
-                g = max(0.0, min(1.0, g))
-                b = max(0.0, min(1.0, b))
-                return (r, g, b)
-        
-        # If color is a single value (grayscale)
+        # If color is already a tuple/list of RGB values (0-1 range)
+        if isinstance(color, (tuple, list)) and len(color) >= 3 and all(0.0 <= c <= 1.0 for c in color[:3]):
+             return tuple(float(c) for c in color[:3]) # Return directly if already in 0-1 range
+
+        # If color is a tuple/list of RGB values (0-255 range)
+        if isinstance(color, (tuple, list)) and len(color) >= 3 and all(0 <= c <= 255 for c in color[:3]):
+             return (float(color[0]) / 255, float(color[1]) / 255, float(color[2]) / 255)
+
+
+        # If color is a single value (grayscale 0-255 or 0-1)
         if isinstance(color, (int, float)):
             val = float(color) / 255 if color > 1 else float(color)
             val = max(0.0, min(1.0, val))
             return (val, val, val)
-        
+
         # If color is a hex string
         if isinstance(color, str) and color.startswith('#'):
             # Convert hex to RGB
             color = color.lstrip('#')
-            r = int(color[0:2], 16) / 255.0
-            g = int(color[2:4], 16) / 255.0
-            b = int(color[4:6], 16) / 255.0
-            return (r, g, b)
-        
+            if len(color) == 6:
+                r = int(color[0:2], 16) / 255.0
+                g = int(color[2:4], 16) / 255.0
+                b = int(color[4:6], 16) / 255.0
+                return (r, g, b)
+            # Handle short hex colors (e.g., #RGB)
+            if len(color) == 3:
+                r = int(color[0]*2, 16) / 255.0
+                g = int(color[1]*2, 16) / 255.0
+                b = int(color[2]*2, 16) / 255.0
+                return (r, g, b)
+
+
         # If color is a CMYK value
         if isinstance(color, (tuple, list)) and len(color) == 4:
             c, m, y, k = color
             # Convert CMYK to RGB
+            # Ensure CMYK values are in 0-1 range
+            c, m, y, k = max(0, min(1, c)), max(0, min(1, m)), max(0, min(1, y)), max(0, min(1, k))
             r = 1 - min(1, c * (1 - k) + k)
             g = 1 - min(1, m * (1 - k) + k)
             b = 1 - min(1, y * (1 - k) + k)
             return (r, g, b)
-        
+
         # Default to black for unknown types
+        logger.warning(f"Unknown color format: {color}")
         return (0, 0, 0)
     except Exception as e:
         logger.warning(f"Error normalizing color {color}: {str(e)}")
@@ -535,19 +565,22 @@ def get_font_name(font_name):
     if font_name in font_map:
         return font_map[font_name]
     
-    # Check if font name contains any of our mapped names
+    # Check if font name contains any of our mapped names (case-insensitive)
     for key in font_map:
         if key in font_name:
             return font_map[key]
     
-    # Check for bold/italic variants
-    if "bold" in font_name and "italic" in font_name:
-        return "Times-BoldItalic"
-    elif "bold" in font_name:
-        return "Helvetica-Bold"
-    elif "italic" in font_name or "oblique" in font_name:
-        return "Times-Italic"
-    
+    # Check for bold/italic variants (case-insensitive)
+    is_bold = "bold" in font_name
+    is_italic = "italic" in font_name or "oblique" in font_name
+
+    if is_bold and is_italic:
+        return "Times-BoldItalic" # Common fallback for bold italic
+    elif is_bold:
+        return "Helvetica-Bold" # Common fallback for bold
+    elif is_italic:
+        return "Times-Italic" # Common fallback for italic
+
     # Default to Helvetica if no match
     return "Helvetica"
 
@@ -580,31 +613,28 @@ def register_fonts():
         )
         
         # Try to register additional fonts if available
+        # This part depends on the system where the code is run
+        # It's good to have, but failures here should not stop the process
         try:
-            # Check if Arial font is available
-            arial_path = os.path.join(os.environ.get('WINDIR', ''), 'Fonts', 'arial.ttf')
-            if os.path.exists(arial_path):
-                TTFont('Arial', arial_path)
-                logger.info("Registered Arial font")
-                
-            # Check for other common fonts
-            font_paths = {
-                'Calibri': 'calibri.ttf',
-                'Verdana': 'verdana.ttf',
-                'Tahoma': 'tahoma.ttf',
-                'Georgia': 'georgia.ttf',
-                'Times New Roman': 'times.ttf',
-                'Courier New': 'cour.ttf'
-            }
-            
-            for font_name, font_file in font_paths.items():
-                font_path = os.path.join(os.environ.get('WINDIR', ''), 'Fonts', font_file)
-                if os.path.exists(font_path):
-                    TTFont(font_name, font_path)
-                    logger.info(f"Registered {font_name} font")
-                    
+            # Example: Registering Arial if available on Windows
+            if os.name == 'nt': # Check if running on Windows
+                arial_path = os.path.join(os.environ.get('WINDIR', ''), 'Fonts', 'arial.ttf')
+                if os.path.exists(arial_path):
+                    pdfmetrics.registerFont(TTFont('Arial', arial_path))
+                    logger.info("Registered Arial font")
+                    # Register Arial family if needed, mapping variants
+                    pdfmetrics.registerFontFamily(
+                        'Arial',
+                        normal='Arial',
+                        bold='Arial-Bold', # Assuming Arial Bold is also available
+                        italic='Arial-Italic', # Assuming Arial Italic is also available
+                        boldItalic='Arial-BoldItalic' # Assuming Arial Bold Italic is also available
+                    )
+            # Add checks for other OS or common font locations if necessary
+            # e.g., for Linux: /usr/share/fonts/, /usr/local/share/fonts/
+
         except Exception as e:
-            logger.warning(f"Could not register additional fonts: {str(e)}")
+            logger.warning(f"Could not register additional system fonts: {str(e)}")
             
     except Exception as e:
         logger.warning(f"Error registering fonts: {str(e)}")
@@ -612,154 +642,118 @@ def register_fonts():
 def create_table(c, table_data, x, y, width, height, font, fontsize, fill_color):
     """
     Creates a table in the PDF using ReportLab.
+    This function is not currently used in save_text_to_pdf but might be for future table rendering.
     """
-    try:
-        # Calculate cell dimensions
-        rows = len(table_data)
-        cols = len(table_data[0]) if table_data else 0
-        
-        if rows == 0 or cols == 0:
-            return
-            
-        cell_width = width / cols
-        cell_height = height / rows
-        
-        # Create table style
-        style = [
-            ('ALIGN', (0, 0), (-1, -1), 'JUSTIFY'),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTNAME', (0, 0), (-1, -1), font),
-            ('FONTSIZE', (0, 0), (-1, -1), fontsize),
-            ('TEXTCOLOR', (0, 0), (-1, -1), fill_color),
-            ('GRID', (0, 0), (-1, -1), 0.5, Color(0.5, 0.5, 0.5)),
-            ('BACKGROUND', (0, 0), (-1, 0), Color(0.9, 0.9, 0.9)),  # Header row
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 3),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-        ]
-        
-        # Create table
-        table = Table(table_data, colWidths=[cell_width] * cols, rowHeights=[cell_height] * rows)
-        table.setStyle(TableStyle(style))
-        
-        # Draw table
-        table.wrapOn(c, width, height)
-        table.drawOn(c, x, y)
-        
-    except Exception as e:
-        logger.warning(f"Error creating table: {str(e)}")
+    logger.warning("create_table function called but not fully implemented for ReportLab flowables.")
+    # This function would need to be adapted to create ReportLab Table flowables
+    # and add them to the story list for use with SimpleDocTemplate.
+    # It cannot directly draw on the canvas when using SimpleDocTemplate for main content flow.
+    pass # Placeholder
 
 def extract_text_with_formatting(pdf_path):
     """
     Extracts text with detailed formatting information using pdfplumber.
     Returns a list of dictionaries with text and formatting details.
+    Includes page number information.
     """
     try:
         result = []
         
-        # Detect headers and footers
-        header_footer_info = detect_headers_footers(pdf_path)
+        # Detect headers and footers - Note: This is currently detected but not used in rendering
+        # header_footer_info = detect_headers_footers(pdf_path)
         
         with pdfplumber.open(pdf_path) as pdf:
             for page_num, page in enumerate(pdf.pages):
-                # Detect tables
-                tables = detect_tables(page)
+                # Detect tables - Note: This is currently detected but not used in rendering
+                # tables = detect_tables(page)
                 
-                # Detect columns
-                columns = detect_columns(page)
+                # Detect columns - Note: This is currently detected but not used in rendering
+                # columns = detect_columns(page)
                 
-                # Extract text with detailed formatting
+                # Extract words with detailed formatting
                 words = page.extract_words(
                     keep_blank_chars=True,
-                    x_tolerance=3,
-                    y_tolerance=3,
-                    extra_attrs=['fontname', 'size', 'upright']
+                    x_tolerance=2, # Reduced tolerance for potentially better alignment
+                    y_tolerance=2, # Reduced tolerance for potentially better alignment
+                    extra_attrs=['fontname', 'size', 'upright', 'color', 'x0', 'x1', 'top', 'bottom'] # Include coordinate and color info
                 )
                 
                 # Group words into lines based on y-position
                 lines = {}
+                # Use a slightly larger tolerance for grouping words into lines if needed
+                line_y_tolerance = 5 # Adjust this value if lines are not grouped correctly
                 for word in words:
-                    y_pos = round(word['top'], 1)  # Round to 1 decimal place for grouping
-                    if y_pos not in lines:
-                        lines[y_pos] = []
-                    lines[y_pos].append(word)
+                    # Round to the nearest tolerance for grouping
+                    y_pos_group = round(word['top'] / line_y_tolerance) * line_y_tolerance
+                    if y_pos_group not in lines:
+                        # Store min/max x0/x1 and average y for the line group
+                        lines[y_pos_group] = {
+                            'words': [],
+                            'y_pos_group': y_pos_group,
+                            'page': page_num,
+                            'min_x0': float('inf'),
+                            'max_x1': float('-inf'),
+                            'avg_y': 0, # To calculate average vertical position
+                            'line_count': 0 # To count words for average y calculation
+                        }
+                    lines[y_pos_group]['words'].append(word)
+                    lines[y_pos_group]['min_x0'] = min(lines[y_pos_group]['min_x0'], word['x0'])
+                    lines[y_pos_group]['max_x1'] = max(lines[y_pos_group]['max_x1'], word['x1'])
+                    lines[y_pos_group]['avg_y'] += word['top'] # Use top as a reference for average y
+                    lines[y_pos_group]['line_count'] += 1 # Count words for average y
                 
-                # Sort lines by y-position (top to bottom)
+                # Sort lines by y-position group (top to bottom)
                 sorted_lines = sorted(lines.items(), key=lambda x: x[0])
                 
-                # Process each line
-                for y_pos, line_words in sorted_lines:
-                    # Sort words in line by x-position (left to right)
-                    line_words.sort(key=lambda x: x['x0'])
+                # Process each line group
+                for y_pos_group, line_info in sorted_lines:
+                    # Sort words in line group by x-position (left to right)
+                    line_info['words'].sort(key=lambda x: x['x0'])
                     
-                    # Create a line object with formatting
+                    # Calculate average y-position for the line
+                    avg_y = line_info['avg_y'] / line_info['line_count'] if line_info['line_count'] > 0 else y_pos_group
+                    
+                    # Create a simplified line object with formatting summary
                     line_obj = {
-                        'text': ' '.join([w['text'] for w in line_words]),
-                        'words': line_words,
-                        'y_pos': y_pos,
+                        'text': ' '.join([w['text'] for w in line_info['words']]),
+                        'words': line_info['words'], # Keep original word data for detail
+                        'y_pos': avg_y, # Use calculated average y-position
                         'page': page_num,
-                        'is_table': False,
-                        'is_column': False,
-                        'is_header': False,
-                        'is_footer': False
+                        'min_x0': line_info['min_x0'],
+                        'max_x1': line_info['max_x1'],
+                        # Include formatting details from the first word as a summary for the line
+                        'fontname': line_info['words'][0].get('fontname') if line_info['words'] else None,
+                        'size': line_info['words'][0].get('size') if line_info['words'] else None,
+                        'color': line_info['words'][0].get('color') if line_info['words'] else None,
+                         'is_table': False, # Placeholder, need more sophisticated detection/handling
+                         'is_column': False, # Placeholder
+                         'is_header': False, # Placeholder
+                         'is_footer': False # Placeholder
                     }
                     
-                    # Check if this line is part of a table
-                    for table in tables:
-                        if (table['bbox'][1] <= y_pos <= table['bbox'][3] and
-                            table['bbox'][0] <= line_words[0]['x0'] <= table['bbox'][2]):
-                            line_obj['is_table'] = True
-                            line_obj['table_data'] = table['data']
-                            break
-                            
-                    # Check if this line is part of a column
-                    for column in columns:
-                        if (column['y0'] <= y_pos <= column['y1'] and
-                            column['x0'] <= line_words[0]['x0'] <= column['x1']):
-                            line_obj['is_column'] = True
-                            line_obj['column'] = column
-                            break
-                            
-                    # Check if this line is a header
-                    for header in header_footer_info['headers']:
-                        if (header['region'][1] <= y_pos <= header['region'][3] and
-                            header['region'][0] <= line_words[0]['x0'] <= header['region'][2]):
-                            line_obj['is_header'] = True
-                            break
-                            
-                    # Check if this line is a footer
-                    for footer in header_footer_info['footers']:
-                        if (footer['region'][1] <= y_pos <= footer['region'][3] and
-                            footer['region'][0] <= line_words[0]['x0'] <= footer['region'][2]):
-                            line_obj['is_footer'] = True
-                            break
-                            
+                    # Note: Table, Column, Header, Footer detection info is currently not fully integrated
+                    # into the line objects in a way that's used by the rendering part.
+                    # If preserving these elements is critical, the rendering logic would need to be updated
+                    # to create specific flowables (e.g., Table, HeaderFooter) instead of just Paragraphs.
+
+
                     result.append(line_obj)
         
-        # Detect paragraphs
+        # Now that we have all lines with their simplified info, detect paragraphs across pages
+        # Need to pass the full result list to detect_paragraphs
         paragraphs = detect_paragraphs(result)
-        
-        # Detect lists
-        lists = detect_lists(result)
-        
-        # Add paragraph and list information to the result
-        for line in result:
-            # Find which paragraph this line belongs to
-            for i, paragraph in enumerate(paragraphs):
-                if line in paragraph['lines']:
-                    line['paragraph_index'] = i
-                    break
-                    
-            # Find which list this line belongs to
-            for i, list_obj in enumerate(lists):
-                for item in list_obj['items']:
-                    if line['line_index'] == item['line_index']:
-                        line['list_index'] = i
-                        line['list_type'] = list_obj['type']
-                        break
-                        
-        return result
+
+        # Add paragraph information back to the result lines (for potential later use if needed)
+        # This step is not strictly necessary for the current rendering logic with SimpleDocTemplate
+        # but could be useful for debugging or future features.
+        # for line in result:
+        #     for i, paragraph in enumerate(paragraphs):
+        #         if line in paragraph['lines']:
+        #             line['paragraph_index'] = i
+        #             break
+
+        return paragraphs # Return the detected paragraphs directly
+
     except Exception as e:
         logger.error(f"Error extracting text with formatting: {str(e)}")
         raise
@@ -780,149 +774,184 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
         page_width, page_height = letter
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
-            formatted_lines = extract_text_with_formatting(original_pdf_path)
+            # extract_text_with_formatting now returns paragraphs directly
+            paragraphs_with_original_lines = extract_text_with_formatting(original_pdf_path)
+
+
             if isinstance(text, str):
                 proofread_words = text.split()
             else:
-                proofread_words = ' '.join(text).split()
+                # Assuming text is already a list of corrected words/phrases or similar
+                # Need to join it to match the structure of the text used for difflib
+                proofread_text_combined = ' '.join(text)
+                proofread_words = proofread_text_combined.split()
+
+
             original_words = []
             line_word_indices = []
             idx = 0
-            for line in formatted_lines:
-                words = line['text'].split()
-                start = idx
-                idx += len(words)
-                end = idx
-                line_word_indices.append((start, end))
-                original_words.extend(words)
+            # Build original words list and line indices from the extracted paragraph lines
+            for para in paragraphs_with_original_lines:
+                 for line in para['lines']:
+                    words = line['text'].split()
+                    start = idx
+                    idx += len(words)
+                    end = idx
+                    line_word_indices.append((start, end))
+                    original_words.extend(words)
+
             sm = difflib.SequenceMatcher(None, original_words, proofread_words)
-            corrected_words = list(original_words)
+            corrected_words = list(original_words) # Start with original
             opcodes = sm.get_opcodes()
             for tag, i1, i2, j1, j2 in opcodes:
                 if tag in ('replace', 'insert'):
                     corrected_words[i1:i2] = proofread_words[j1:j2]
                 elif tag == 'delete':
-                    corrected_words[i1:i2] = []
+                    corrected_words[i1:i2] = [] # Remove deleted words
+
+            # Reconstruct corrected lines based on the original line structure indices
             corrected_lines = []
             for start, end in line_word_indices:
                 corrected_lines.append(' '.join(corrected_words[start:end]))
 
-            # Group lines by page number
-            lines_by_page = defaultdict(list)
-            for i, line in enumerate(formatted_lines):
-                line = dict(line)
-                line['line_index'] = i
-                lines_by_page[line.get('page', 0)].append(line)
 
-            # --- Determine the baseline left margin from the first page's first paragraph ---
-            base_original_left_margin_x0 = doc_template.leftMargin # Default value
+            # --- Determine the absolute minimum x0 across ALL paragraphs ---
+            # This will be our most reliable baseline for zero indentation
+            absolute_min_x0_all_paragraphs = float('inf')
+            for para in paragraphs_with_original_lines:
+                 if para['lines']:
+                      # Find the minimum x0 within this paragraph's lines
+                      para_min_x0 = float('inf')
+                      for line in para['lines']:
+                           if line['words']:
+                                para_min_x0 = min(para_min_x0, line['words'][0]['x0'])
+                      if para_min_x0 != float('inf'):
+                           absolute_min_x0_all_paragraphs = min(absolute_min_x0_all_paragraphs, para_min_x0)
 
-            first_page_paragraphs = detect_paragraphs(lines_by_page.get(0, [])) # Get paragraphs from the first page
-            if first_page_paragraphs and first_page_paragraphs[0]['lines'] and first_page_paragraphs[0]['lines'][0]['words']:
-                 # Use the x0 of the first word of the first paragraph on the first page as the baseline
-                 base_original_left_margin_x0 = first_page_paragraphs[0]['lines'][0]['words'][0]['x0']
-
-            # --- End of baseline determination ---
+            # Use doc template margin as a fallback if no text found
+            if absolute_min_x0_all_paragraphs == float('inf'):
+                 absolute_min_x0_all_paragraphs = doc_template.leftMargin
 
 
             story = []
-            page_numbers = sorted(lines_by_page.keys())
 
-            for page_idx, page_num in enumerate(page_numbers):
-                page_lines = lines_by_page[page_num]
-                if not page_lines:
-                    continue
+            # Iterate through the detected paragraphs (which are already grouped by original page implicitly by extract_text_with_formatting)
+            current_page_num = None
+            for para_idx, para in enumerate(paragraphs_with_original_lines):
+                 para_lines = para['lines']
+                 if not para_lines:
+                      continue
 
-                # Detect paragraphs for this page
-                paragraphs = detect_paragraphs(page_lines)
-                for para in paragraphs:
-                    para_lines = para['lines']
-                    para_indices = [l['line_index'] for l in para_lines]
-                    para_text = ' '.join([corrected_lines[i] for i in para_indices])
-                    if not para_lines:
-                        continue
+                 # Get the original page number for this paragraph
+                 original_page_num = para_lines[0]['page']
 
-                    # Calculate the minimum x0 and maximum x1 for this paragraph
-                    min_x0 = float('inf')
-                    max_x1 = float('-inf')
+                 # Add a page break if the page number changes, except before the first page
+                 if current_page_num is not None and original_page_num != current_page_num:
+                      story.append(PageBreak())
+                      # Add space at the top of the new page if needed (optional, handled by topMargin)
+                      # story.append(Spacer(1, doc_template.topMargin)) # Example
 
-                    for line in para_lines:
-                        if line['words']: # Ensure line is not empty
-                            min_x0 = min(min_x0, line['words'][0]['x0'])
-                            max_x1 = max(max_x1, line['words'][-1]['x0'] + line['words'][-1]['width'])
-
-                    if min_x0 == float('inf') or max_x1 == float('-inf'):
-                         continue # Skip if no words found in paragraph lines
-
-                    first_word = para_lines[0]['words'][0]
-                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                    font_size = float(first_word.get('size', 11))
-                    mupdf_page = doc[para_lines[0]['page']]
-                    # Use the bounding box of the first line for color detection
-                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
-                    color = get_text_color(mupdf_page, bbox)
-                    r, g, b = normalize_color(color) if color else (0, 0, 0)
-
-                    # Calculate left indent relative to the established baseline
-                    # This is the additional indent beyond the base margin
-                    left_indent = max(0, min_x0 - base_original_left_margin_x0)
-
-                    # Calculate right indent from the right edge of the text block to the right margin
-                    right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
+                 current_page_num = original_page_num # Update current page number
 
 
-                    # Calculate first line indent if it differs from the paragraph's overall left indent
-                    # This is relative to the paragraph's calculated left indent
-                    first_line_x0 = para_lines[0]['words'][0]['x0'] if para_lines[0]['words'] else min_x0
-                    calculated_first_line_indent = max(0, first_line_x0 - min_x0)
+                 para_text = ' '.join([corrected_lines[l['line_index']] for l in para_lines]) # Get corrected text for the paragraph
+
+                 # Calculate the minimum x0 and maximum x1 for this paragraph from its original lines
+                 min_x0 = float('inf')
+                 max_x1 = float('-inf')
+                 has_words = False
+                 for line in para_lines:
+                     if line['words']:
+                          has_words = True
+                          min_x0 = min(min_x0, line['words'][0]['x0'])
+                          max_x1 = max(max_x1, line['words'][-1]['x0'] + line['words'][-1]['width'])
+
+                 if not has_words:
+                      continue # Skip if the paragraph has no words after all
+
+                 first_word = para_lines[0]['words'][0] if para_lines[0]['words'] else None
+                 if not first_word:
+                      continue # Should not happen if has_words is true, but as a safeguard
+
+                 font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                 font_size = float(first_word.get('size', 11))
+                 mupdf_page = doc[original_page_num] # Use original page num for color detection
+
+                 # Use the bounding box of the first line for color detection (simplification)
+                 bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                 color = get_text_color(mupdf_page, bbox)
+                 r, g, b = normalize_color(color) if color else (0, 0, 0)
 
 
-                    # Determine if there's a significant first line indent vs a block indent
-                    # Use a heuristic threshold (e.g., half a character width or font size)
-                    indent_threshold = font_size * 0.3 # Reduced threshold for potentially smaller indents
+                 # Calculate left indent relative to the absolute minimum x0 found in the document
+                 # This is the additional indent beyond the document's standard left margin
+                 # Ensure indent is non-negative
+                 left_indent = max(0, min_x0 - absolute_min_x0_all_paragraphs)
 
-                    # Check if there's a first line indent significantly different from the block indent
-                    if calculated_first_line_indent > indent_threshold and abs(calculated_first_line_indent - (min_x0 - base_original_left_margin_x0)) > indent_threshold:
-                         # Treat it as a first line indent
-                         style = ParagraphStyle(
-                              name='JustifiedWithComplexIndent',
-                              fontName=font_name,
-                              fontSize=font_size,
-                              leading=font_size * 1.2,
-                              textColor=Color(r, g, b),
-                              alignment=TA_JUSTIFY,
-                              spaceAfter=font_size * 0.5,
-                              spaceBefore=0,
-                              leftIndent=doc_template.leftMargin + left_indent, # Base margin + additional block indent
-                              rightIndent=right_indent,
-                              firstLineIndent=calculated_first_line_indent, # Additional indent for the first line
-                         )
-                    else:
-                        # Otherwise, assume it's a regular block indent or no indent
-                         style = ParagraphStyle(
-                              name='JustifiedWithBlockIndent',
-                              fontName=font_name,
-                              fontSize=font_size,
-                              leading=font_size * 1.2,
-                              textColor=Color(r, g, b),
-                              alignment=TA_JUSTIFY,
-                              spaceAfter=font_size * 0.5,
-                              spaceBefore=0,
-                              leftIndent=doc_template.leftMargin + left_indent, # Base margin + calculated left indent
-                              rightIndent=right_indent, # Apply the calculated right indent
-                              firstLineIndent=0, # No special first line indent
-                         )
+                 # Calculate right indent from the right edge of the text block to the right margin
+                 # Use page_width based on the template, and subtract document right margin and paragraph's width from the right
+                 # This calculation needs to be careful about the reference point
+                 # A simpler way might be to calculate the width and use that with left indent
+                 # Let's calculate the intended width based on original max_x1 and min_x0
+                 intended_width = max_x1 - min_x0
+                 # The right indent will then be the usable width minus the left indent and intended width
+                 usable_width = page_width - doc_template.leftMargin - doc_template.rightMargin
+                 calculated_right_indent = max(0, usable_width - left_indent - intended_width)
 
 
-                    para_obj = Paragraph(para_text, style)
-                    story.append(para_obj)
-                    # Add space after the paragraph
-                    story.append(Spacer(1, style.spaceAfter))
+                 # Calculate first line indent if it differs from the paragraph's overall left indent
+                 # This is relative to the paragraph's calculated left indent
+                 first_line_x0 = para_lines[0]['words'][0]['x0'] if para_lines[0]['words'] else min_x0
+                 calculated_first_line_indent = max(0, first_line_x0 - min_x0)
 
-                # Add a page break after each page's content except the last
-                # This preserves the original page structure
-                if page_idx < len(page_numbers) - 1:
-                    story.append(PageBreak())
+
+                 # Determine if there's a significant first line indent vs a block indent
+                 # Use a heuristic threshold
+                 indent_threshold = font_size * 0.2 # Further reduced threshold
+
+
+                 # Check if there's a first line indent significantly different from zero (relative to paragraph's min_x0)
+                 if calculated_first_line_indent > indent_threshold and abs(calculated_first_line_indent - left_indent) > indent_threshold:
+                      # If the first line indent is significantly different from the block indent, apply it
+                      style = ParagraphStyle(
+                           name='JustifiedWithComplexIndent',
+                           fontName=font_name,
+                           fontSize=font_size,
+                           leading=font_size * 1.2,
+                           textColor=Color(r, g, b),
+                           alignment=TA_JUSTIFY,
+                           spaceAfter=font_size * 0.5,
+                           spaceBefore=0,
+                           leftIndent=doc_template.leftMargin + left_indent, # Base margin + block indent
+                           rightIndent=calculated_right_indent, # Apply calculated right indent
+                           firstLineIndent=calculated_first_line_indent, # Additional indent for the first line
+                      )
+                 else:
+                     # Otherwise, assume it's a regular block indent or no indent
+                      style = ParagraphStyle(
+                           name='JustifiedWithBlockIndent',
+                           fontName=font_name,
+                           fontSize=font_size,
+                           leading=font_size * 1.2,
+                           textColor=Color(r, g, b),
+                           alignment=TA_JUSTIFY,
+                           spaceAfter=font_size * 0.5,
+                           spaceBefore=0,
+                           leftIndent=doc_template.leftMargin + left_indent, # Base margin + calculated left indent
+                           rightIndent=calculated_right_indent, # Apply the calculated right indent
+                           firstLineIndent=0, # No special first line indent
+                      )
+
+
+                 para_obj = Paragraph(para_text, style)
+                 story.append(para_obj)
+                 # Add space after the paragraph
+                 # Only add spacer if it's not the last paragraph on the original page
+                 # This is tricky because Platypus handles flow, but adding a small space after each
+                 # paragraph based on font size is a reasonable default.
+                 # If precise vertical spacing from original PDF is needed, it's much more complex.
+                 # story.append(Spacer(1, style.spaceAfter)) # Keep existing spacer for consistency
+
 
             # Add page numbers using onPage callback
             def add_page_number(canvas, doc):
@@ -970,8 +999,13 @@ def convert_and_proofread():
                 try:
                     selected_suggestions = dict(json.loads(request.form['selected_suggestions']))
                     # Apply selected suggestions
+                    # Need to be careful here to apply suggestions to the proofread_text_content correctly
+                    # This might need a more sophisticated replacement that considers word boundaries
+                    # For simplicity now, doing a basic replace, but could lead to issues
                     for original_word, selected_word in selected_suggestions.items():
-                        proofread_text_content = proofread_text_content.replace(original_word, selected_word)
+                         # Use regex to replace whole words only
+                         proofread_text_content = re.sub(r'\b' + re.escape(original_word) + r'\b', selected_word, proofread_text_content)
+
                 except Exception as e:
                     logger.warning(f"Failed to parse selected suggestions: {str(e)}")
 
@@ -1018,7 +1052,7 @@ def convert_and_proofread():
 
         return jsonify({
             "original_text": extracted_text,
-            "proofread_text": proofread_text_content,
+            "proofread_text": proofread_text_content, # Return the combined string text
             "grammar_errors": grammar_errors,
             "download_url": "/download/" + proofread_pdf_filename,
             "file_name": filename  # Add filename to response for frontend reference
