@@ -812,10 +812,21 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 line = dict(line)
                 line['line_index'] = i
                 lines_by_page[line.get('page', 0)].append(line)
+
             story = []
             page_numbers = sorted(lines_by_page.keys())
+
             for page_idx, page_num in enumerate(page_numbers):
                 page_lines = lines_by_page[page_num]
+                if not page_lines:
+                    continue
+
+                # Calculate minimum x0 for the entire page as a reference
+                page_min_x0 = float('inf')
+                for line in page_lines:
+                    if line['words']:
+                        page_min_x0 = min(page_min_x0, line['words'][0]['x0'])
+
                 # Detect paragraphs for this page
                 paragraphs = detect_paragraphs(page_lines)
                 for para in paragraphs:
@@ -836,28 +847,27 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     if min_x0 == float('inf') or max_x1 == float('-inf'):
                          continue # Skip if no words found in paragraph lines
 
+
                     first_word = para_lines[0]['words'][0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
                     mupdf_page = doc[para_lines[0]['page']]
+                    # Use the bounding box of the first line for color detection
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
 
-                    # Calculate left and right indents based on the paragraph's bounding box
-                    # Indents are relative to the page margins defined in SimpleDocTemplate
-                    left_indent = max(0, min_x0 - doc_template.leftMargin)
-                    # Calculate right indent from the right edge of the text block to the right margin
-                    right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
+                    # Calculate left indent relative to the page's main text area start
+                    # Ensure indent is non-negative
+                    left_indent = max(0, min_x0 - page_min_x0)
 
-                    # Ensure total horizontal space used by indents doesn't exceed usable width
-                    if left_indent + right_indent > page_width - doc_template.leftMargin - doc_template.rightMargin:
-                         # If indents are too large, reset them to default margins
-                         left_indent = 0
-                         right_indent = 0
+                    # Calculate right indent relative to the page's overall width
+                    # This tries to maintain the right edge of the text block
+                    right_indent = max(0, page_width - max_x1 - doc_template.rightMargin)
+
 
                     style = ParagraphStyle(
-                        name='JustifiedWithAdaptingIndent', # New name
+                        name='JustifiedWithAdaptingIndent',
                         fontName=font_name,
                         fontSize=font_size,
                         leading=font_size * 1.2,
@@ -871,8 +881,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         firstLineIndent=0, # You might need to detect and set this based on first line x0 vs min_x0
                     )
 
-                    # Paragraph width is now implicitly handled by left and right indents relative to page size
-                    # We don't need to explicitly calculate para_width and wrap before appending to story
+                    # Ensure the effective width (page_width - leftMargin - rightMargin - leftIndent - rightIndent) is positive
+                    # This calculation is complex with both left/right indents and template margins.
+                    # Instead of recalculating width, let ReportLab handle wrap with indents and margins.
+
                     para_obj = Paragraph(para_text, style)
                     story.append(para_obj)
                     # Add space after the paragraph
@@ -885,11 +897,13 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
 
             # Add page numbers using onPage callback
             def add_page_number(canvas, doc):
-                canvas.setFont('Helvetica', 10)
-                canvas.drawString(page_width/2, 30, str(doc.page))
+                # Position page number at the bottom center
+                canvas.drawCentredString(page_width/2, 30, str(doc.page))
 
             # Build the document with the story and page number callback
+            # Pass the canvas and document to the callback for positioning
             doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+
 
             doc.close()
             logger.info("PDF saved successfully with original formatting")
