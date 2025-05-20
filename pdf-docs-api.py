@@ -824,6 +824,18 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     para_text = ' '.join([corrected_lines[i] for i in para_indices])
                     if not para_lines:
                         continue
+
+                    # Calculate the bounding box for this paragraph across all its lines
+                    min_x0 = float('inf')
+                    max_x1 = float('-inf')
+                    for line in para_lines:
+                        if line['words']: # Ensure line is not empty
+                            min_x0 = min(min_x0, line['words'][0]['x0'])
+                            max_x1 = max(max_x1, line['words'][-1]['x0'] + line['words'][-1]['width'])
+
+                    if min_x0 == float('inf') or max_x1 == float('-inf'):
+                         continue # Skip if no words found in paragraph lines
+
                     first_word = para_lines[0]['words'][0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
@@ -832,13 +844,20 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
 
-                    # Calculate left indent based on the first word's x0 position
-                    # Subtract the template's left margin to get the indent relative to the margin
-                    left_indent = first_word['x0'] - doc_template.leftMargin if first_word['x0'] > doc_template.leftMargin else 0
+                    # Calculate left and right indents based on the paragraph's bounding box
+                    # Indents are relative to the page margins defined in SimpleDocTemplate
+                    left_indent = max(0, min_x0 - doc_template.leftMargin)
+                    # Calculate right indent from the right edge of the text block to the right margin
+                    right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
 
+                    # Ensure total horizontal space used by indents doesn't exceed usable width
+                    if left_indent + right_indent > page_width - doc_template.leftMargin - doc_template.rightMargin:
+                         # If indents are too large, reset them to default margins
+                         left_indent = 0
+                         right_indent = 0
 
                     style = ParagraphStyle(
-                        name='JustifiedWithIndent', # Give it a different name
+                        name='JustifiedWithAdaptingIndent', # New name
                         fontName=font_name,
                         fontSize=font_size,
                         leading=font_size * 1.2,
@@ -846,26 +865,21 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         alignment=TA_JUSTIFY,
                         spaceAfter=font_size * 0.5,
                         spaceBefore=0,
-                        leftIndent=left_indent, # Apply the calculated indent
-                        rightIndent=0,
+                        leftIndent=left_indent, # Apply the calculated left indent
+                        rightIndent=right_indent, # Apply the calculated right indent
+                        # Consider firstLineIndent if needed for specific paragraph styles
+                        firstLineIndent=0, # You might need to detect and set this based on first line x0 vs min_x0
                     )
-                    # Adjust paragraph width based on left indent and right margin
-                    # This ensures the paragraph fits within the available space
-                    para_width = page_width - doc_template.leftMargin - left_indent - doc_template.rightMargin
-                    # Ensure width is not negative
-                    para_width = max(1, para_width)
 
-
+                    # Paragraph width is now implicitly handled by left and right indents relative to page size
+                    # We don't need to explicitly calculate para_width and wrap before appending to story
                     para_obj = Paragraph(para_text, style)
-                    # Wrap the paragraph with the calculated width before adding to story
-                    # This is crucial for accurate layout with varying indents
-                    para_obj.wrap(para_width, page_height)
-
                     story.append(para_obj)
                     # Add space after the paragraph
                     story.append(Spacer(1, style.spaceAfter))
 
                 # Add a page break after each page's content except the last
+                # This preserves the original page structure
                 if page_idx < len(page_numbers) - 1:
                     story.append(PageBreak())
 
