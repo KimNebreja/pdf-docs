@@ -713,33 +713,45 @@ def extract_text_with_formatting(pdf_path):
                     # Calculate average y-position for the line
                     avg_y = line_info['avg_y'] / line_info['line_count'] if line_info['line_count'] > 0 else y_pos_group
                     
-                    # Create a simplified line object with formatting summary
-                    line_obj = {
-                        'text': ' '.join([w['text'] for w in line_info['words']]),
-                        'words': line_info['words'], # Keep original word data for detail
-                        'y_pos': avg_y, # Use calculated average y-position
-                        'page': page_num,
-                        'min_x0': line_info['min_x0'],
-                        'max_x1': line_info['max_x1'],
-                        # Include formatting details from the first word as a summary for the line
-                        'fontname': line_info['words'][0].get('fontname') if line_info['words'] else None,
-                        'size': line_info['words'][0].get('size') if line_info['words'] else None,
-                        # Safely get color, ensuring it's not the problematic string 'color'
-                        'color': line_info['words'][0].get('color') if line_info['words'] and line_info['words'][0].get('color') != 'color' else None,
-                         'is_table': False, # Placeholder, need more sophisticated detection/handling
-                         'is_column': False, # Placeholder
-                         'is_header': False, # Placeholder
-                         'is_footer': False # Placeholder
-                    }
-                    
-                    # Note: Table, Column, Header, Footer detection info is currently not fully integrated
-                    # into the line objects in a way that's used by the rendering part.
-                    # If preserving these elements is critical, the rendering logic would need to be updated
-                    # to create specific flowables (e.g., Table, HeaderFooter) instead of just Paragraphs.
+                    # --- Start Error Handling for Line Processing ---
+                    try:
+                        if not line_info['words']:
+                             continue # Skip empty lines
 
+                        first_word = line_info['words'][0] # Get the first word for summary info
 
-                    result.append(line_obj)
-        
+                        # Create a simplified line object with formatting summary
+                        line_obj = {
+                            'text': ' '.join([w['text'] for w in line_info['words']]),
+                            'words': line_info['words'], # Keep original word data for detail
+                            'y_pos': avg_y, # Use calculated average y-position
+                            'page': page_num,
+                            'min_x0': line_info['min_x0'],
+                            'max_x1': line_info['max_x1'],
+                            # Include formatting details from the first word as a summary for the line
+                            # Use .get() with a default of None for safety
+                            'fontname': first_word.get('fontname'),
+                            'size': first_word.get('size'),
+                            'color': first_word.get('color'),
+                             'is_table': False, # Placeholder, need more sophisticated detection/handling
+                             'is_column': False, # Placeholder
+                             'is_header': False, # Placeholder
+                             'is_footer': False # Placeholder
+                        }
+
+                        # Note: Table, Column, Header, Footer detection info is currently not fully integrated
+                        # into the line objects in a way that's used by the rendering part.
+                        # If preserving these elements is critical, the rendering logic would need to be updated
+                        # to create specific flowables (e.g., Table, HeaderFooter) instead of just Paragraphs.
+
+                        result.append(line_obj)
+                    except Exception as e:
+                         # Log a warning if processing a specific line fails
+                         # This allows the extraction to continue for other lines/pages
+                         line_text_preview = ' '.join([w.get('text', '') for w in line_info.get('words', [])])[:100] # Preview of the line text
+                         logger.warning(f"Error processing line on page {page_num} starting with '{line_text_preview}...': {str(e)}. Skipping this line.")
+                    # --- End Error Handling for Line Processing ---
+
         # Now that we have all lines with their simplified info, detect paragraphs across pages
         # Need to pass the full result list to detect_paragraphs
         paragraphs = detect_paragraphs(result)
