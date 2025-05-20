@@ -821,12 +821,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 if not page_lines:
                     continue
 
-                # Calculate minimum x0 for the entire page as a reference
-                page_min_x0 = float('inf')
-                for line in page_lines:
-                    if line['words']:
-                        page_min_x0 = min(page_min_x0, line['words'][0]['x0'])
-
                 # Detect paragraphs for this page
                 paragraphs = detect_paragraphs(page_lines)
                 for para in paragraphs:
@@ -836,16 +830,29 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     if not para_lines:
                         continue
 
-                    # Calculate the bounding box for this paragraph across all its lines
+                    # Calculate the average x0 for lines in this paragraph as a basis for left indent
+                    total_x0 = 0
+                    word_count_in_para = 0
                     min_x0 = float('inf')
                     max_x1 = float('-inf')
+
                     for line in para_lines:
-                        if line['words']: # Ensure line is not empty
+                        if line['words']:
+                            total_x0 += line['words'][0]['x0']
                             min_x0 = min(min_x0, line['words'][0]['x0'])
                             max_x1 = max(max_x1, line['words'][-1]['x0'] + line['words'][-1]['width'])
+                            word_count_in_para += len(line['words'])
 
-                    if min_x0 == float('inf') or max_x1 == float('-inf'):
-                         continue # Skip if no words found in paragraph lines
+                    if word_count_in_para == 0:
+                        continue # Skip if no words in paragraph
+
+                    # Use the minimum x0 for the paragraph's starting point
+                    # Calculate left indent relative to the document's left margin
+                    left_indent = max(0, min_x0 - doc_template.leftMargin)
+
+                     # Calculate right indent relative to the document's right margin
+                     # Use the overall page width and right margin as references
+                    right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
 
 
                     first_word = para_lines[0]['words'][0]
@@ -856,15 +863,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
-
-                    # Calculate left indent relative to the page's main text area start
-                    # Ensure indent is non-negative
-                    left_indent = max(0, min_x0 - page_min_x0)
-
-                    # Calculate right indent relative to the page's overall width
-                    # This tries to maintain the right edge of the text block
-                    right_indent = max(0, page_width - max_x1 - doc_template.rightMargin)
-
 
                     style = ParagraphStyle(
                         name='JustifiedWithAdaptingIndent',
@@ -880,10 +878,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         # Consider firstLineIndent if needed for specific paragraph styles
                         firstLineIndent=0, # You might need to detect and set this based on first line x0 vs min_x0
                     )
-
-                    # Ensure the effective width (page_width - leftMargin - rightMargin - leftIndent - rightIndent) is positive
-                    # This calculation is complex with both left/right indents and template margins.
-                    # Instead of recalculating width, let ReportLab handle wrap with indents and margins.
 
                     para_obj = Paragraph(para_text, style)
                     story.append(para_obj)
