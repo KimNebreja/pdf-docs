@@ -806,6 +806,13 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             corrected_lines = []
             for start, end in line_word_indices:
                 corrected_lines.append(' '.join(corrected_words[start:end]))
+
+            # Calculate global minimum x0 across all lines as a robust reference for left margin
+            global_min_x0 = float('inf')
+            for line in formatted_lines:
+                if line['words']:
+                    global_min_x0 = min(global_min_x0, line['words'][0]['x0'])
+
             # Group lines by page number
             lines_by_page = defaultdict(list)
             for i, line in enumerate(formatted_lines):
@@ -830,7 +837,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     if not para_lines:
                         continue
 
-                    # Calculate the minimum x0 for this paragraph
+                    # Calculate the minimum x0 and maximum x1 for this paragraph
                     min_x0 = float('inf')
                     max_x1 = float('-inf')
 
@@ -851,23 +858,30 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
 
-                    # Calculate left indent based on the paragraph's minimum x0 relative to the margin
-                    left_indent = max(0, min_x0 - doc_template.leftMargin)
+                    # Calculate left indent relative to the global minimum x0 and document margin
+                    # Ensure indent is non-negative
+                    left_indent = max(0, doc_template.leftMargin + (min_x0 - global_min_x0))
 
-                    # Calculate right indent from the right edge of the text block to the right margin
+
+                    # Calculate right indent relative to the page width and document right margin
                     right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
 
-                    # Calculate first line indent if it differs from the paragraph's overall left indent
-                    first_line_x0 = para_lines[0]['words'][0]['x0'] if para_lines[0]['words'] else min_x0
-                    first_line_indent = max(0, first_line_x0 - min_x0) # Indent relative to paragraph's left edge
 
-                    # Adjust left indent if the first line indent is significantly different
-                    # This is a heuristic and might need tuning
-                    if first_line_indent > font_size * 0.5: # If first line is indented by more than half a font size
-                         # Treat it as a first line indent
-                         calculated_first_line_indent = max(0, first_line_x0 - doc_template.leftMargin - left_indent)
+                    # Calculate first line indent if it differs from the paragraph's overall left indent
+                    # This is relative to the paragraph's calculated left indent
+                    first_line_x0 = para_lines[0]['words'][0]['x0'] if para_lines[0]['words'] else min_x0
+                    calculated_first_line_indent = max(0, first_line_x0 - min_x0)
+
+
+                    # Determine if there's a significant first line indent vs a block indent
+                    # Use a heuristic threshold (e.g., half a character width or font size)
+                    indent_threshold = font_size * 0.5 # Example threshold
+
+                    if calculated_first_line_indent > indent_threshold and abs(calculated_first_line_indent - (min_x0 - global_min_x0)) > indent_threshold:
+                        # If the first line indent is significantly different from the block indent
+                        # Apply both block indent and first line indent
                          style = ParagraphStyle(
-                              name='JustifiedWithFirstLineIndent',
+                              name='JustifiedWithComplexIndent',
                               fontName=font_name,
                               fontSize=font_size,
                               leading=font_size * 1.2,
@@ -875,9 +889,9 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                               alignment=TA_JUSTIFY,
                               spaceAfter=font_size * 0.5,
                               spaceBefore=0,
-                              leftIndent=left_indent, # Apply the overall block indent
+                              leftIndent=left_indent, # Overall block indent
                               rightIndent=right_indent,
-                              firstLineIndent=calculated_first_line_indent, # Apply calculated first line indent
+                              firstLineIndent=calculated_first_line_indent, # Additional indent for the first line
                          )
                     else:
                         # Otherwise, assume it's a regular block indent or no indent
