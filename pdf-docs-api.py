@@ -781,31 +781,75 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
             formatted_lines = extract_text_with_formatting(original_pdf_path)
+            
+            # Split text while preserving whitespace
             if isinstance(text, str):
-                proofread_words = text.split()
+                # Split text into words while preserving multiple spaces
+                proofread_words = []
+                current_word = []
+                for char in text:
+                    if char.isspace():
+                        if current_word:
+                            proofread_words.append(''.join(current_word))
+                            current_word = []
+                        proofread_words.append(char)
+                    else:
+                        current_word.append(char)
+                if current_word:
+                    proofread_words.append(''.join(current_word))
             else:
                 proofread_words = ' '.join(text).split()
+            
             original_words = []
             line_word_indices = []
             idx = 0
             for line in formatted_lines:
-                words = line['text'].split()
+                # Split line while preserving whitespace
+                words = []
+                current_word = []
+                for char in line['text']:
+                    if char.isspace():
+                        if current_word:
+                            words.append(''.join(current_word))
+                            current_word = []
+                        words.append(char)
+                    else:
+                        current_word.append(char)
+                if current_word:
+                    words.append(''.join(current_word))
+                
                 start = idx
                 idx += len(words)
                 end = idx
                 line_word_indices.append((start, end))
                 original_words.extend(words)
+            
+            # Use difflib to match original and proofread text
             sm = difflib.SequenceMatcher(None, original_words, proofread_words)
             corrected_words = list(original_words)
             opcodes = sm.get_opcodes()
+            
+            # Apply corrections while preserving whitespace
             for tag, i1, i2, j1, j2 in opcodes:
                 if tag in ('replace', 'insert'):
-                    corrected_words[i1:i2] = proofread_words[j1:j2]
+                    # Preserve whitespace from original text
+                    if i1 > 0 and original_words[i1-1].isspace():
+                        corrected_words[i1:i2] = [original_words[i1-1]] + proofread_words[j1:j2]
+                    else:
+                        corrected_words[i1:i2] = proofread_words[j1:j2]
                 elif tag == 'delete':
                     corrected_words[i1:i2] = []
+            
+            # Recombine lines while preserving whitespace
             corrected_lines = []
             for start, end in line_word_indices:
-                corrected_lines.append(' '.join(corrected_words[start:end]))
+                line_words = corrected_words[start:end]
+                # Preserve original line spacing
+                if line_words and line_words[0].isspace():
+                    corrected_lines.append(''.join(line_words))
+                else:
+                    corrected_lines.append(''.join(line_words))
+            
             # Group lines by page number
             lines_by_page = defaultdict(list)
             for i, line in enumerate(formatted_lines):
