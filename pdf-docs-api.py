@@ -966,39 +966,46 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
 
                     # Calculate indentation with more precision
-                    left_indent = max(0, min_x0 - doc_template.leftMargin)
-                    right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
-                    
-                    # Calculate first line indent
-                    first_line_x0 = para_lines[0]['words'][0]['x0'] if para_lines[0]['words'] else min_x0
-                    first_line_indent = max(0, first_line_x0 - min_x0)
+                    # Using the min x0 position of all words in the paragraph as the base left indent
+                    min_paragraph_x0 = min(w['x0'] for line in para_lines for w in line['words']) if any(line['words'] for line in para_lines) else doc_template.leftMargin
+                    left_indent = max(0, min_paragraph_x0 - doc_template.leftMargin)
+
+                    # Using the max x1 position of all words in the paragraph as the base right indent
+                    max_paragraph_x1 = max(w['x0'] + w['width'] for line in para_lines for w in line['words']) if any(line['words'] for line in para_lines) else page_width - doc_template.rightMargin
+                    right_indent = max(0, page_width - doc_template.rightMargin - max_paragraph_x1)
+
+                    # Calculate first line indent relative to the paragraph's left indent
+                    first_line_x0 = para_lines[0]['words'][0]['x0'] if para_lines[0]['words'] else min_paragraph_x0
+                    first_line_indent_relative = max(0, first_line_x0 - min_paragraph_x0)
 
                     # Use the enhanced spacing information
                     spacing = para.get('spacing', {})
-                    space_before = max(spacing.get('before', 0), font_size * 1.2)  # Ensure minimum spacing
-                    space_after = max(spacing.get('after', 0), font_size * 1.2)    # Ensure minimum spacing
-                    
-                    # Calculate line spacing with safety margin
+                    # Ensure minimum spacing is based on detected font size
+                    space_before = max(spacing.get('before', 0), font_size * 0.8) # Adjusted threshold
+                    space_after = max(spacing.get('after', 0), font_size * 0.8)  # Adjusted threshold
+
+                    # Calculate line spacing within the paragraph
+                    # Use the average line spacing detected, but ensure it's at least the font size plus a small buffer
                     avg_line_spacing = max(
-                        spacing.get('avg_line_spacing', font_size * 1.2),
-                        spacing.get('max_line_height', font_size) * 1.2  # Ensure minimum line spacing
+                        spacing.get('avg_line_spacing', font_size * 1.2), # Ensure minimum line spacing
+                        font_size * 1.1 # Fallback minimum leading
                     )
 
                     # Create paragraph style with precise spacing
-                    if first_line_indent > font_size * 0.5:
-                        calculated_first_line_indent = max(0, first_line_x0 - doc_template.leftMargin - left_indent)
+                    # Apply firstLineIndent only if it's significantly different from the overall left indent
+                    if first_line_indent_relative > font_size * 0.3: # Adjusted threshold
                         style = ParagraphStyle(
                             name='JustifiedWithFirstLineIndent',
                             fontName=font_name,
                             fontSize=font_size,
-                            leading=avg_line_spacing + 0.5,
+                            leading=avg_line_spacing + 0.5, # Use calculated avg_line_spacing for leading
                             textColor=Color(r, g, b),
                             alignment=TA_JUSTIFY,
                             spaceAfter=space_after,
                             spaceBefore=space_before,
                             leftIndent=left_indent,
                             rightIndent=right_indent,
-                            firstLineIndent=calculated_first_line_indent,
+                            firstLineIndent=first_line_indent_relative, # Use the calculated relative indent
                             allowWidows=0,  # Prevent single lines at top/bottom
                             allowOrphans=0,  # Prevent single lines at top/bottom
                         )
@@ -1007,7 +1014,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             name='JustifiedWithBlockIndent',
                             fontName=font_name,
                             fontSize=font_size,
-                            leading=avg_line_spacing + 0.5,
+                            leading=avg_line_spacing + 0.5, # Use calculated avg_line_spacing for leading
                             textColor=Color(r, g, b),
                             alignment=TA_JUSTIFY,
                             spaceAfter=space_after,
@@ -1026,9 +1033,13 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 if page_idx < len(page_numbers) - 1:
                     story.append(PageBreak())
 
-            # Add page numbers
+            # Add page numbers (assuming you want them centered at the bottom)
             def add_page_number(canvas, doc):
-                canvas.drawCentredString(page_width/2, 30, str(doc.page))
+                canvas.saveState()
+                # Draw page number at the bottom center, outside the margin
+                canvas.setFont('Helvetica', 9) # Adjust font and size as needed
+                canvas.drawCentredString(page_width/2, doc_template.bottomMargin / 2 , str(doc.page))
+                canvas.restoreState()
 
             # Build document
             doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
