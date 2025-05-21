@@ -374,24 +374,40 @@ def detect_paragraphs(lines):
                     'before': 0,
                     'after': 0,
                     'line_spacing': [],
-                    'avg_line_spacing': 0
+                    'avg_line_spacing': 0,
+                    'max_line_height': 0,
+                    'min_line_height': float('inf')
                 }
                 
                 # Calculate spacing before paragraph
                 if i > 0:
-                    spacing_info['before'] = current_paragraph[0]['y_pos'] - lines[i-1]['y_pos']
+                    spacing_info['before'] = max(
+                        current_paragraph[0]['y_pos'] - lines[i-1]['y_pos'],
+                        sum(w['height'] for w in current_paragraph[0]['words']) / len(current_paragraph[0]['words']) * 1.2
+                    )
                 
                 # Calculate spacing after paragraph
                 if i < len(lines) - 1:
-                    spacing_info['after'] = line['y_pos'] - current_paragraph[-1]['y_pos']
+                    spacing_info['after'] = max(
+                        line['y_pos'] - current_paragraph[-1]['y_pos'],
+                        sum(w['height'] for w in current_paragraph[-1]['words']) / len(current_paragraph[-1]['words']) * 1.2
+                    )
                 
                 # Calculate line spacing within paragraph
                 if len(current_paragraph) > 1:
                     for j in range(1, len(current_paragraph)):
                         line_spacing = current_paragraph[j]['y_pos'] - current_paragraph[j-1]['y_pos']
                         spacing_info['line_spacing'].append(line_spacing)
+                        
+                        # Calculate line heights
+                        curr_line_height = sum(w['height'] for w in current_paragraph[j]['words']) / len(current_paragraph[j]['words'])
+                        spacing_info['max_line_height'] = max(spacing_info['max_line_height'], curr_line_height)
+                        spacing_info['min_line_height'] = min(spacing_info['min_line_height'], curr_line_height)
                     
-                    spacing_info['avg_line_spacing'] = sum(spacing_info['line_spacing']) / len(spacing_info['line_spacing'])
+                    spacing_info['avg_line_spacing'] = max(
+                        sum(spacing_info['line_spacing']) / len(spacing_info['line_spacing']),
+                        spacing_info['max_line_height'] * 1.2  # Ensure minimum line spacing
+                    )
                 
                 paragraphs.append({
                     'lines': current_paragraph,
@@ -414,17 +430,30 @@ def detect_paragraphs(lines):
                 'before': 0,
                 'after': 0,
                 'line_spacing': [],
-                'avg_line_spacing': 0
+                'avg_line_spacing': 0,
+                'max_line_height': 0,
+                'min_line_height': float('inf')
             }
             
             if len(current_paragraph) > 1:
-                spacing_info['before'] = current_paragraph[0]['y_pos'] - lines[len(current_paragraph)-2]['y_pos']
+                spacing_info['before'] = max(
+                    current_paragraph[0]['y_pos'] - lines[len(current_paragraph)-2]['y_pos'],
+                    sum(w['height'] for w in current_paragraph[0]['words']) / len(current_paragraph[0]['words']) * 1.2
+                )
                 
                 for j in range(1, len(current_paragraph)):
                     line_spacing = current_paragraph[j]['y_pos'] - current_paragraph[j-1]['y_pos']
                     spacing_info['line_spacing'].append(line_spacing)
+                    
+                    # Calculate line heights
+                    curr_line_height = sum(w['height'] for w in current_paragraph[j]['words']) / len(current_paragraph[j]['words'])
+                    spacing_info['max_line_height'] = max(spacing_info['max_line_height'], curr_line_height)
+                    spacing_info['min_line_height'] = min(spacing_info['min_line_height'], curr_line_height)
                 
-                spacing_info['avg_line_spacing'] = sum(spacing_info['line_spacing']) / len(spacing_info['line_spacing'])
+                spacing_info['avg_line_spacing'] = max(
+                    sum(spacing_info['line_spacing']) / len(spacing_info['line_spacing']),
+                    spacing_info['max_line_height'] * 1.2  # Ensure minimum line spacing
+                )
             
             paragraphs.append({
                 'lines': current_paragraph,
@@ -946,9 +975,14 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
 
                     # Use the enhanced spacing information
                     spacing = para.get('spacing', {})
-                    space_before = spacing.get('before', 0)
-                    space_after = spacing.get('after', 0)
-                    avg_line_spacing = spacing.get('avg_line_spacing', font_size * 1.2)
+                    space_before = max(spacing.get('before', 0), font_size * 1.2)  # Ensure minimum spacing
+                    space_after = max(spacing.get('after', 0), font_size * 1.2)    # Ensure minimum spacing
+                    
+                    # Calculate line spacing with safety margin
+                    avg_line_spacing = max(
+                        spacing.get('avg_line_spacing', font_size * 1.2),
+                        spacing.get('max_line_height', font_size) * 1.2  # Ensure minimum line spacing
+                    )
 
                     # Create paragraph style with precise spacing
                     if first_line_indent > font_size * 0.5:
@@ -965,6 +999,8 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             leftIndent=left_indent,
                             rightIndent=right_indent,
                             firstLineIndent=calculated_first_line_indent,
+                            allowWidows=0,  # Prevent single lines at top/bottom
+                            allowOrphans=0,  # Prevent single lines at top/bottom
                         )
                     else:
                         style = ParagraphStyle(
@@ -979,6 +1015,8 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             leftIndent=left_indent,
                             rightIndent=right_indent,
                             firstLineIndent=0,
+                            allowWidows=0,  # Prevent single lines at top/bottom
+                            allowOrphans=0,  # Prevent single lines at top/bottom
                         )
 
                     para_obj = Paragraph(para_text, style)
