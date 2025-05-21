@@ -836,12 +836,26 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     min_y0 = float('inf')
                     max_y1 = float('-inf')
 
+                    # Calculate line heights and positions
+                    line_heights = []
+                    line_positions = []
                     for line in para_lines:
                         if line['words']:  # Ensure line is not empty
                             min_x0 = min(min_x0, line['words'][0]['x0'])
                             max_x1 = max(max_x1, line['words'][-1]['x0'] + line['words'][-1]['width'])
                             min_y0 = min(min_y0, line['words'][0]['top'])
                             max_y1 = max(max_y1, line['words'][-1]['bottom'])
+                            
+                            # Calculate line height
+                            line_height = line['words'][-1]['bottom'] - line['words'][0]['top']
+                            line_heights.append(line_height)
+                            
+                            # Store line position
+                            line_positions.append({
+                                'top': line['words'][0]['top'],
+                                'bottom': line['words'][-1]['bottom'],
+                                'height': line_height
+                            })
 
                     if min_x0 == float('inf') or max_x1 == float('-inf'):
                         continue  # Skip if no words found in paragraph lines
@@ -876,7 +890,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         if prev_para['lines']:
                             last_line = prev_para['lines'][-1]
                             if last_line['words']:
-                                space_before = max(0, min_y0 - last_line['words'][-1]['bottom'])
+                                # Calculate the actual gap between paragraphs
+                                gap = min_y0 - last_line['words'][-1]['bottom']
+                                # Convert gap to points (1 point = 1/72 inch)
+                                space_before = max(0, gap * 72 / pdf.pages[0].height)
                     
                     # Calculate space after paragraph
                     if para_idx < len(paragraphs) - 1:
@@ -884,16 +901,30 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         if next_para['lines']:
                             first_line = next_para['lines'][0]
                             if first_line['words']:
-                                space_after = max(0, first_line['words'][0]['top'] - max_y1)
+                                # Calculate the actual gap between paragraphs
+                                gap = first_line['words'][0]['top'] - max_y1
+                                # Convert gap to points (1 point = 1/72 inch)
+                                space_after = max(0, gap * 72 / pdf.pages[0].height)
 
-                    # Calculate line height based on the average height of lines in the paragraph
-                    line_heights = []
-                    for line in para_lines:
-                        if line['words']:
-                            line_height = line['words'][-1]['bottom'] - line['words'][0]['top']
-                            line_heights.append(line_height)
-                    
-                    avg_line_height = sum(line_heights) / len(line_heights) if line_heights else font_size * 1.2
+                    # Calculate average line height and spacing
+                    if line_heights:
+                        avg_line_height = sum(line_heights) / len(line_heights)
+                        # Convert to points (1 point = 1/72 inch)
+                        avg_line_height = avg_line_height * 72 / pdf.pages[0].height
+                    else:
+                        avg_line_height = font_size * 1.2
+
+                    # Calculate line spacing based on the gaps between lines
+                    line_spacing = 0
+                    if len(line_positions) > 1:
+                        gaps = []
+                        for i in range(len(line_positions) - 1):
+                            gap = line_positions[i + 1]['top'] - line_positions[i]['bottom']
+                            gaps.append(gap)
+                        if gaps:
+                            avg_gap = sum(gaps) / len(gaps)
+                            # Convert gap to points (1 point = 1/72 inch)
+                            line_spacing = avg_gap * 72 / pdf.pages[0].height
 
                     # Adjust first line indent if it's significantly different
                     if first_line_indent > font_size * 0.5:  # If first line is indented by more than half a font size
@@ -902,7 +933,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             name='JustifiedWithFirstLineIndent',
                             fontName=font_name,
                             fontSize=font_size,
-                            leading=avg_line_height,  # Use calculated average line height
+                            leading=avg_line_height + line_spacing,  # Add line spacing to leading
                             textColor=Color(r, g, b),
                             alignment=TA_JUSTIFY,
                             spaceAfter=space_after,
@@ -916,7 +947,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             name='JustifiedWithBlockIndent',
                             fontName=font_name,
                             fontSize=font_size,
-                            leading=avg_line_height,  # Use calculated average line height
+                            leading=avg_line_height + line_spacing,  # Add line spacing to leading
                             textColor=Color(r, g, b),
                             alignment=TA_JUSTIFY,
                             spaceAfter=space_after,
