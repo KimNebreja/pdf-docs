@@ -823,7 +823,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
 
                 # Detect paragraphs for this page
                 paragraphs = detect_paragraphs(page_lines)
-                for para in paragraphs:
+                for para_idx, para in enumerate(paragraphs):
                     para_lines = para['lines']
                     para_indices = [l['line_index'] for l in para_lines]
                     para_text = ' '.join([corrected_lines[i] for i in para_indices])
@@ -833,19 +833,24 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     # Calculate the minimum x0 for this paragraph
                     min_x0 = float('inf')
                     max_x1 = float('-inf')
+                    min_y0 = float('inf')
+                    max_y1 = float('-inf')
 
                     for line in para_lines:
-                        if line['words']: # Ensure line is not empty
+                        if line['words']:  # Ensure line is not empty
                             min_x0 = min(min_x0, line['words'][0]['x0'])
                             max_x1 = max(max_x1, line['words'][-1]['x0'] + line['words'][-1]['width'])
+                            min_y0 = min(min_y0, line['words'][0]['top'])
+                            max_y1 = max(max_y1, line['words'][-1]['bottom'])
 
                     if min_x0 == float('inf') or max_x1 == float('-inf'):
-                         continue # Skip if no words found in paragraph lines
+                        continue  # Skip if no words found in paragraph lines
 
                     first_word = para_lines[0]['words'][0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
                     mupdf_page = doc[para_lines[0]['page']]
+                    
                     # Use the bounding box of the first line for color detection
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
@@ -859,62 +864,81 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
 
                     # Calculate first line indent if it differs from the paragraph's overall left indent
                     first_line_x0 = para_lines[0]['words'][0]['x0'] if para_lines[0]['words'] else min_x0
-                    first_line_indent = max(0, first_line_x0 - min_x0) # Indent relative to paragraph's left edge
+                    first_line_indent = max(0, first_line_x0 - min_x0)  # Indent relative to paragraph's left edge
 
-                    # Adjust left indent if the first line indent is significantly different
-                    # This is a heuristic and might need tuning
-                    if first_line_indent > font_size * 0.5: # If first line is indented by more than half a font size
-                         # Treat it as a first line indent
-                         calculated_first_line_indent = max(0, first_line_x0 - doc_template.leftMargin - left_indent)
-                         style = ParagraphStyle(
-                              name='JustifiedWithFirstLineIndent',
-                              fontName=font_name,
-                              fontSize=font_size,
-                              leading=font_size * 1.2,
-                              textColor=Color(r, g, b),
-                              alignment=TA_JUSTIFY,
-                              spaceAfter=font_size * 0.5,
-                              spaceBefore=0,
-                              leftIndent=left_indent, # Apply the overall block indent
-                              rightIndent=right_indent,
-                              firstLineIndent=calculated_first_line_indent, # Apply calculated first line indent
-                         )
+                    # Calculate paragraph spacing
+                    space_before = 0
+                    space_after = 0
+                    
+                    # Calculate space before paragraph
+                    if para_idx > 0:
+                        prev_para = paragraphs[para_idx - 1]
+                        if prev_para['lines']:
+                            last_line = prev_para['lines'][-1]
+                            if last_line['words']:
+                                space_before = max(0, min_y0 - last_line['words'][-1]['bottom'])
+                    
+                    # Calculate space after paragraph
+                    if para_idx < len(paragraphs) - 1:
+                        next_para = paragraphs[para_idx + 1]
+                        if next_para['lines']:
+                            first_line = next_para['lines'][0]
+                            if first_line['words']:
+                                space_after = max(0, first_line['words'][0]['top'] - max_y1)
+
+                    # Calculate line height based on the average height of lines in the paragraph
+                    line_heights = []
+                    for line in para_lines:
+                        if line['words']:
+                            line_height = line['words'][-1]['bottom'] - line['words'][0]['top']
+                            line_heights.append(line_height)
+                    
+                    avg_line_height = sum(line_heights) / len(line_heights) if line_heights else font_size * 1.2
+
+                    # Adjust first line indent if it's significantly different
+                    if first_line_indent > font_size * 0.5:  # If first line is indented by more than half a font size
+                        calculated_first_line_indent = max(0, first_line_x0 - doc_template.leftMargin - left_indent)
+                        style = ParagraphStyle(
+                            name='JustifiedWithFirstLineIndent',
+                            fontName=font_name,
+                            fontSize=font_size,
+                            leading=avg_line_height,  # Use calculated average line height
+                            textColor=Color(r, g, b),
+                            alignment=TA_JUSTIFY,
+                            spaceAfter=space_after,
+                            spaceBefore=space_before,
+                            leftIndent=left_indent,
+                            rightIndent=right_indent,
+                            firstLineIndent=calculated_first_line_indent,
+                        )
                     else:
-                        # Otherwise, assume it's a regular block indent or no indent
-                         style = ParagraphStyle(
-                              name='JustifiedWithBlockIndent',
-                              fontName=font_name,
-                              fontSize=font_size,
-                              leading=font_size * 1.2,
-                              textColor=Color(r, g, b),
-                              alignment=TA_JUSTIFY,
-                              spaceAfter=font_size * 0.5,
-                              spaceBefore=0,
-                              leftIndent=left_indent, # Apply the calculated left indent
-                              rightIndent=right_indent, # Apply the calculated right indent
-                              firstLineIndent=0, # No special first line indent
-                         )
-
+                        style = ParagraphStyle(
+                            name='JustifiedWithBlockIndent',
+                            fontName=font_name,
+                            fontSize=font_size,
+                            leading=avg_line_height,  # Use calculated average line height
+                            textColor=Color(r, g, b),
+                            alignment=TA_JUSTIFY,
+                            spaceAfter=space_after,
+                            spaceBefore=space_before,
+                            leftIndent=left_indent,
+                            rightIndent=right_indent,
+                            firstLineIndent=0,
+                        )
 
                     para_obj = Paragraph(para_text, style)
                     story.append(para_obj)
-                    # Add space after the paragraph
-                    story.append(Spacer(1, style.spaceAfter))
 
                 # Add a page break after each page's content except the last
-                # This preserves the original page structure
                 if page_idx < len(page_numbers) - 1:
                     story.append(PageBreak())
 
             # Add page numbers using onPage callback
             def add_page_number(canvas, doc):
-                # Position page number at the bottom center
                 canvas.drawCentredString(page_width/2, 30, str(doc.page))
 
             # Build the document with the story and page number callback
-            # Pass the canvas and document to the callback for positioning
             doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
-
 
             doc.close()
             logger.info("PDF saved successfully with original formatting")
@@ -1019,4 +1043,4 @@ def download_file(filename):
     return jsonify({"error": "File not found"}), 404
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000, debug=True)
+    app.run(host='0.0.0.0', port=10000, debug=True) 
