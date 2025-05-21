@@ -338,23 +338,25 @@ def detect_paragraphs(lines):
             # Calculate vertical spacing with more precision
             if i > 0:
                 vertical_gap = line['y_pos'] - lines[i-1]['y_pos']
-                avg_line_height = sum(w['height'] for w in lines[i-1]['words']) / len(lines[i-1]['words'])
+                # Calculate average line height of the previous line, handle potential division by zero
+                prev_line_words = lines[i-1]['words']
+                avg_prev_line_height = sum(w['height'] for w in prev_line_words) / len(prev_line_words) if prev_line_words else 0
                 
-                # More precise paragraph break detection
-                if vertical_gap > avg_line_height * 1.2:  # Reduced threshold for better detection
+                # More precise paragraph break detection - slightly increased threshold for vertical gap
+                if avg_prev_line_height > 0 and vertical_gap > avg_prev_line_height * 1.5:  # Increased threshold
                     is_new_paragraph = True
                     
                 # Check for significant indentation with relative measurement
-                if line['words'] and lines[i-1]['words']:
+                if line['words'] and prev_line_words:
                     current_indent = line['words'][0]['x0']
-                    prev_indent = lines[i-1]['words'][0]['x0']
-                    indent_threshold = avg_line_height * 0.5  # Relative to line height
+                    prev_indent = prev_line_words[0]['x0']
+                    indent_threshold = avg_prev_line_height * 0.6  # Slightly increased threshold for indentation change
                     
                     if current_indent > prev_indent + indent_threshold:
                         is_new_paragraph = True
                 
                 # Enhanced formatting change detection
-                if len(current_paragraph) > 0:
+                if len(current_paragraph) > 0 and line['words']:
                     prev_word = current_paragraph[-1]['words'][0]
                     curr_word = line['words'][0]
                     
@@ -379,34 +381,36 @@ def detect_paragraphs(lines):
                     'min_line_height': float('inf')
                 }
                 
-                # Calculate spacing before paragraph
-                if i > 0:
-                    spacing_info['before'] = max(
-                        current_paragraph[0]['y_pos'] - lines[i-1]['y_pos'],
-                        sum(w['height'] for w in current_paragraph[0]['words']) / len(current_paragraph[0]['words']) * 1.2
-                    )
-                
-                # Calculate spacing after paragraph
-                if i < len(lines) - 1:
-                    spacing_info['after'] = max(
-                        line['y_pos'] - current_paragraph[-1]['y_pos'],
-                        sum(w['height'] for w in current_paragraph[-1]['words']) / len(current_paragraph[-1]['words']) * 1.2
-                    )
-                
+                # Calculate spacing before paragraph (if it's not the very first paragraph)
+                if len(lines) > 1 and i - len(current_paragraph) >= 0:
+                    prev_line_words = lines[i - len(current_paragraph)]['words']
+                    avg_prev_line_height = sum(w['height'] for w in prev_line_words) / len(prev_line_words) if prev_line_words else 0
+                    # Calculate vertical gap between the end of the previous line and the start of the current paragraph
+                    vertical_gap_before = current_paragraph[0]['y_pos'] - lines[i - len(current_paragraph)]['y_pos']
+                    # Use the actual vertical gap for spacing before, fallback to calculated minimum
+                    spacing_info['before'] = max(vertical_gap_before, avg_prev_line_height * 0.8 if avg_prev_line_height > 0 else font_size * 0.8) # Use actual gap, fallback to font size factor
+
+                # Calculate spacing after paragraph (since it's the last paragraph, there's no line after it within the detected lines)
+                # We might want to add a default space_after here if needed for consistency, but for the last paragraph it's often zero in source PDFs
+                spacing_info['after'] = 0 # Explicitly set after spacing to 0 for the last paragraph
+
                 # Calculate line spacing within paragraph
                 if len(current_paragraph) > 1:
                     for j in range(1, len(current_paragraph)):
                         line_spacing = current_paragraph[j]['y_pos'] - current_paragraph[j-1]['y_pos']
                         spacing_info['line_spacing'].append(line_spacing)
                         
-                        # Calculate line heights
-                        curr_line_height = sum(w['height'] for w in current_paragraph[j]['words']) / len(current_paragraph[j]['words'])
+                        # Calculate line heights - handle potential division by zero
+                        curr_line_words = current_paragraph[j]['words']
+                        curr_line_height = sum(w['height'] for w in curr_line_words) / len(curr_line_words) if curr_line_words else 0
                         spacing_info['max_line_height'] = max(spacing_info['max_line_height'], curr_line_height)
-                        spacing_info['min_line_height'] = min(spacing_info['min_line_height'], curr_line_height)
+                        spacing_info['min_line_height'] = min(spacing_info['min_line_height'], curr_line_height) if curr_line_height > 0 else spacing_info['min_line_height']
                     
+                    # Calculate average line spacing, ensure minimum based on max line height or a default factor
+                    avg_line_spacing_calculated = sum(spacing_info['line_spacing']) / len(spacing_info['line_spacing']) if spacing_info['line_spacing'] else 0
                     spacing_info['avg_line_spacing'] = max(
-                        sum(spacing_info['line_spacing']) / len(spacing_info['line_spacing']),
-                        spacing_info['max_line_height'] * 1.2  # Ensure minimum line spacing
+                        avg_line_spacing_calculated,
+                        spacing_info['max_line_height'] * 1.3 if spacing_info['max_line_height'] > 0 else font_size * 1.3  # Ensure minimum line spacing is slightly larger
                     )
                 
                 paragraphs.append({
@@ -436,23 +440,33 @@ def detect_paragraphs(lines):
             }
             
             if len(current_paragraph) > 1:
-                spacing_info['before'] = max(
-                    current_paragraph[0]['y_pos'] - lines[len(current_paragraph)-2]['y_pos'],
-                    sum(w['height'] for w in current_paragraph[0]['words']) / len(current_paragraph[0]['words']) * 1.2
-                )
-                
+                prev_line_words = lines[len(current_paragraph)-2]['words']
+                avg_prev_line_height = sum(w['height'] for w in prev_line_words) / len(prev_line_words) if prev_line_words else 0
+                # Calculate vertical gap between the end of the previous line and the start of the current paragraph
+                vertical_gap_before = current_paragraph[0]['y_pos'] - lines[len(current_paragraph)-2]['y_pos']
+                # Use the actual vertical gap for spacing before, fallback to calculated minimum
+                spacing_info['before'] = max(vertical_gap_before, avg_prev_line_height * 0.8 if avg_prev_line_height > 0 else font_size * 0.8) # Use actual gap, fallback to font size factor
+
+                # Calculate spacing after paragraph (since it's the last paragraph, there's no line after it within the detected lines)
+                # We might want to add a default space_after here if needed for consistency, but for the last paragraph it's often zero in source PDFs
+                spacing_info['after'] = 0 # Explicitly set after spacing to 0 for the last paragraph
+
+                # Calculate line spacing within paragraph
                 for j in range(1, len(current_paragraph)):
                     line_spacing = current_paragraph[j]['y_pos'] - current_paragraph[j-1]['y_pos']
                     spacing_info['line_spacing'].append(line_spacing)
                     
-                    # Calculate line heights
-                    curr_line_height = sum(w['height'] for w in current_paragraph[j]['words']) / len(current_paragraph[j]['words'])
+                    # Calculate line heights - handle potential division by zero
+                    curr_line_words = current_paragraph[j]['words']
+                    curr_line_height = sum(w['height'] for w in curr_line_words) / len(curr_line_words) if curr_line_words else 0
                     spacing_info['max_line_height'] = max(spacing_info['max_line_height'], curr_line_height)
-                    spacing_info['min_line_height'] = min(spacing_info['min_line_height'], curr_line_height)
+                    spacing_info['min_line_height'] = min(spacing_info['min_line_height'], curr_line_height) if curr_line_height > 0 else spacing_info['min_line_height']
                 
+                # Calculate average line spacing, ensure minimum based on max line height or a default factor
+                avg_line_spacing_calculated = sum(spacing_info['line_spacing']) / len(spacing_info['line_spacing']) if spacing_info['line_spacing'] else 0
                 spacing_info['avg_line_spacing'] = max(
-                    sum(spacing_info['line_spacing']) / len(spacing_info['line_spacing']),
-                    spacing_info['max_line_height'] * 1.2  # Ensure minimum line spacing
+                    avg_line_spacing_calculated,
+                    spacing_info['max_line_height'] * 1.3 if spacing_info['max_line_height'] > 0 else font_size * 1.3  # Ensure minimum line spacing is slightly larger
                 )
             
             paragraphs.append({
