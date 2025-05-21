@@ -770,6 +770,8 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     try:
         register_fonts()
+        # Use standard letter size for output
+        # Keep margins for the overall document structure
         doc_template = SimpleDocTemplate(
             pdf_path,
             pagesize=letter,
@@ -810,10 +812,15 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 line = dict(line)
                 line['line_index'] = i
                 lines_by_page[line.get('page', 0)].append(line)
+
             story = []
             page_numbers = sorted(lines_by_page.keys())
+
             for page_idx, page_num in enumerate(page_numbers):
                 page_lines = lines_by_page[page_num]
+                if not page_lines:
+                    continue
+
                 # Detect paragraphs for this page
                 paragraphs = detect_paragraphs(page_lines)
                 for para in paragraphs:
@@ -822,15 +829,48 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     para_text = ' '.join([corrected_lines[i] for i in para_indices])
                     if not para_lines:
                         continue
+
+                    # Calculate the minimum x0 for this paragraph
+                    min_x0 = float('inf')
+                    max_x1 = float('-inf')
+                    first_line_x0 = float('inf')
+                    first_line_indent = 0
+
+                    for i, line in enumerate(para_lines):
+                        if line['words']:  # Ensure line is not empty
+                            line_x0 = line['words'][0]['x0']
+                            line_x1 = line['words'][-1]['x0'] + line['words'][-1]['width']
+                            min_x0 = min(min_x0, line_x0)
+                            max_x1 = max(max_x1, line_x1)
+                            
+                            # Calculate first line indent
+                            if i == 0:  # First line of paragraph
+                                first_line_x0 = line_x0
+                                # Calculate indent relative to the rest of the paragraph
+                                if len(para_lines) > 1:
+                                    first_line_indent = max(0, first_line_x0 - min_x0)
+
+                    if min_x0 == float('inf') or max_x1 == float('-inf'):
+                        continue  # Skip if no words found in paragraph lines
+
                     first_word = para_lines[0]['words'][0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
                     mupdf_page = doc[para_lines[0]['page']]
+                    # Use the bounding box of the first line for color detection
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
+
+                    # Calculate left indent based on the paragraph's minimum x0 relative to the margin
+                    left_indent = max(0, min_x0 - doc_template.leftMargin)
+
+                    # Calculate right indent from the right edge of the text block to the right margin
+                    right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
+
+                    # Create paragraph style with proper indentation
                     style = ParagraphStyle(
-                        name='Justified',
+                        name='JustifiedWithIndent',
                         fontName=font_name,
                         fontSize=font_size,
                         leading=font_size * 1.2,
@@ -838,19 +878,28 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         alignment=TA_JUSTIFY,
                         spaceAfter=font_size * 0.5,
                         spaceBefore=0,
-                        leftIndent=0,
-                        rightIndent=0,
+                        leftIndent=left_indent,
+                        rightIndent=right_indent,
+                        firstLineIndent=first_line_indent
                     )
+
                     para_obj = Paragraph(para_text, style)
                     story.append(para_obj)
-                    story.append(Spacer(1, font_size * 0.5))
-                # Add a page break after each page except the last
+                    # Add space after the paragraph
+                    story.append(Spacer(1, style.spaceAfter))
+
+                # Add a page break after each page's content except the last
                 if page_idx < len(page_numbers) - 1:
                     story.append(PageBreak())
+
+            # Add page numbers using onPage callback
             def add_page_number(canvas, doc):
-                canvas.setFont('Helvetica', 10)
-                canvas.drawString(page_width/2, 30, str(doc.page))
+                # Position page number at the bottom center
+                canvas.drawCentredString(page_width/2, 30, str(doc.page))
+
+            # Build the document with the story and page number callback
             doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+
             doc.close()
             logger.info("PDF saved successfully with original formatting")
     except Exception as e:
