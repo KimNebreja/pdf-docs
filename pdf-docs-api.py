@@ -831,27 +831,27 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 # Get the corrected text for this line
                 line_text = corrected_lines[line['line_index']]
                 
-                # Get the first word's properties for styling
+                # Get the first word's properties for styling (as a base)
                 first_word = line['words'][0]
-                last_word = line['words'][-1]
                 
                 # Get font information
                 font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                 font_size = float(first_word.get('size', 11))
                 
                 # Get text color
-                bbox = fitz.Rect(first_word['x0'], first_word['top'], 
-                               first_word['x0'] + first_word['width'], 
-                               first_word['bottom'])
-                color = get_text_color(orig_page, bbox)
+                # We use the bbox of the first word to sample color, assuming color is consistent within a line
+                color_bbox = fitz.Rect(first_word['x0'], first_word['top'], 
+                                  first_word['x0'] + first_word['width'], 
+                                  first_word['bottom'])
+                color = get_text_color(orig_page, color_bbox)
                 r, g, b = normalize_color(color) if color else (0, 0, 0)
                 
-                # Calculate text position and bounding box
-                x0 = first_word['x0']
-                y0 = first_word['top']
-                x1 = last_word['x0'] + last_word['width']
-                y1 = last_word['bottom']
-                line_bbox = fitz.Rect(x0, y0, x1, y1)
+                # Calculate bounding box for the entire line
+                min_x = min(w['x0'] for w in line['words'])
+                max_x = max(w['x0'] + w['width'] for w in line['words'])
+                min_y = min(w['top'] for w in line['words'])
+                max_y = max(w['bottom'] for w in line['words'])
+                line_bbox = fitz.Rect(min_x, min_y, max_x, max_y)
                 
                 # Insert text into textbox with justification
                 new_page.insert_textbox(
