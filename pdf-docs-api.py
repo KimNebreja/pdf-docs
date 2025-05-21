@@ -901,6 +901,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     
                     for line in para_lines:
                         for word in line['words']:
+                            # Add default values for potentially missing attributes
+                            word.setdefault('fontweight', 0)
+                            word.setdefault('fontstyle', '')
+                            
                             # Get word formatting
                             word_font = get_font_name(word.get('fontname', 'Helvetica'))
                             word_size = float(word.get('size', font_size))
