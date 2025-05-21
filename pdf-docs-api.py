@@ -680,6 +680,10 @@ def extract_text_with_formatting(pdf_path):
                 # Group words into lines based on y-position
                 lines = {}
                 for word in words:
+                    # Add default values for potentially missing attributes
+                    word.setdefault('fontweight', 0)
+                    word.setdefault('fontstyle', '')
+                    
                     y_pos = round(word['top'], 1)  # Round to 1 decimal place for grouping
                     if y_pos not in lines:
                         lines[y_pos] = []
