@@ -846,23 +846,21 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 color = get_text_color(orig_page, bbox)
                 r, g, b = normalize_color(color) if color else (0, 0, 0)
                 
-                # Calculate text position
-                x_pos = first_word['x0']
-                y_pos = first_word['top']
+                # Calculate text position and bounding box
+                x0 = first_word['x0']
+                y0 = first_word['top']
+                x1 = last_word['x0'] + last_word['width']
+                y1 = last_word['bottom']
+                line_bbox = fitz.Rect(x0, y0, x1, y1)
                 
-                # Calculate text width
-                text_width = last_word['x0'] + last_word['width'] - first_word['x0']
-                
-                # Create text insertion point
-                point = fitz.Point(x_pos, y_pos)
-                
-                # Insert text with exact positioning
-                new_page.insert_text(
-                    point,
+                # Insert text into textbox with justification
+                new_page.insert_textbox(
+                    line_bbox,
                     line_text,
                     fontname=font_name,
                     fontsize=font_size,
-                    color=(r, g, b)
+                    color=(r, g, b),
+                    align=fitz.TEXT_ALIGN_JUSTIFY
                 )
 
         # Save the new PDF
