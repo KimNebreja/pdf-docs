@@ -770,21 +770,30 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     try:
         register_fonts()
-        # Use standard letter size for output
-        # Keep margins for the overall document structure
-        doc_template = SimpleDocTemplate(
-            pdf_path,
-            pagesize=letter,
-            leftMargin=72, rightMargin=72, topMargin=72, bottomMargin=72
-        )
-        page_width, page_height = letter
+        # Create a new PDF with the same dimensions as the original
         with pdfplumber.open(original_pdf_path) as pdf:
+            original_page = pdf.pages[0]
+            page_width = original_page.width
+            page_height = original_page.height
+            
+            # Create a new PDF with the same dimensions
+            doc_template = SimpleDocTemplate(
+                pdf_path,
+                pagesize=(page_width, page_height),
+                leftMargin=0,
+                rightMargin=0,
+                topMargin=0,
+                bottomMargin=0
+            )
+
             doc = fitz.open(original_pdf_path)
             formatted_lines = extract_text_with_formatting(original_pdf_path)
+            
             if isinstance(text, str):
                 proofread_words = text.split()
             else:
                 proofread_words = ' '.join(text).split()
+                
             original_words = []
             line_word_indices = []
             idx = 0
@@ -795,6 +804,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 end = idx
                 line_word_indices.append((start, end))
                 original_words.extend(words)
+                
             sm = difflib.SequenceMatcher(None, original_words, proofread_words)
             corrected_words = list(original_words)
             opcodes = sm.get_opcodes()
@@ -803,9 +813,11 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     corrected_words[i1:i2] = proofread_words[j1:j2]
                 elif tag == 'delete':
                     corrected_words[i1:i2] = []
+                    
             corrected_lines = []
             for start, end in line_word_indices:
                 corrected_lines.append(' '.join(corrected_words[start:end]))
+
             # Group lines by page number
             lines_by_page = defaultdict(list)
             for i, line in enumerate(formatted_lines):
@@ -821,158 +833,68 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 if not page_lines:
                     continue
 
-                # Detect paragraphs for this page
-                paragraphs = detect_paragraphs(page_lines)
-                for para_idx, para in enumerate(paragraphs):
-                    para_lines = para['lines']
-                    para_indices = [l['line_index'] for l in para_lines]
-                    para_text = ' '.join([corrected_lines[i] for i in para_indices])
-                    if not para_lines:
+                # Process each line individually to maintain exact positioning
+                for line_idx, line in enumerate(page_lines):
+                    if not line['words']:
                         continue
 
-                    # Calculate the minimum x0 for this paragraph
-                    min_x0 = float('inf')
-                    max_x1 = float('-inf')
-                    min_y0 = float('inf')
-                    max_y1 = float('-inf')
-
-                    # Calculate line heights and positions
-                    line_heights = []
-                    line_positions = []
-                    for line in para_lines:
-                        if line['words']:  # Ensure line is not empty
-                            min_x0 = min(min_x0, line['words'][0]['x0'])
-                            max_x1 = max(max_x1, line['words'][-1]['x0'] + line['words'][-1]['width'])
-                            min_y0 = min(min_y0, line['words'][0]['top'])
-                            max_y1 = max(max_y1, line['words'][-1]['bottom'])
-                            
-                            # Calculate line height
-                            line_height = line['words'][-1]['bottom'] - line['words'][0]['top']
-                            line_heights.append(line_height)
-                            
-                            # Store line position
-                            line_positions.append({
-                                'top': line['words'][0]['top'],
-                                'bottom': line['words'][-1]['bottom'],
-                                'height': line_height
-                            })
-
-                    if min_x0 == float('inf') or max_x1 == float('-inf'):
-                        continue  # Skip if no words found in paragraph lines
-
-                    first_word = para_lines[0]['words'][0]
+                    # Get the corrected text for this line
+                    line_text = corrected_lines[line['line_index']]
+                    
+                    # Get the first word's properties for styling
+                    first_word = line['words'][0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
-                    mupdf_page = doc[para_lines[0]['page']]
                     
-                    # Use the bounding box of the first line for color detection
-                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                    # Get text color
+                    mupdf_page = doc[line['page']]
+                    bbox = fitz.Rect(first_word['x0'], first_word['top'], 
+                                   first_word['x0'] + first_word['width'], 
+                                   first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
 
-                    # Calculate left indent based on the paragraph's minimum x0 relative to the margin
-                    left_indent = max(0, min_x0 - doc_template.leftMargin)
-
-                    # Calculate right indent from the right edge of the text block to the right margin
-                    right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
-
-                    # Calculate first line indent if it differs from the paragraph's overall left indent
-                    first_line_x0 = para_lines[0]['words'][0]['x0'] if para_lines[0]['words'] else min_x0
-                    first_line_indent = max(0, first_line_x0 - min_x0)  # Indent relative to paragraph's left edge
-
-                    # Calculate paragraph spacing
-                    space_before = 0
-                    space_after = 0
+                    # Calculate exact position
+                    x_pos = first_word['x0']
+                    y_pos = page_height - first_word['top']  # Convert to bottom-up coordinates
                     
-                    # Calculate space before paragraph
-                    if para_idx > 0:
-                        prev_para = paragraphs[para_idx - 1]
-                        if prev_para['lines']:
-                            last_line = prev_para['lines'][-1]
-                            if last_line['words']:
-                                # Calculate the actual gap between paragraphs
-                                gap = min_y0 - last_line['words'][-1]['bottom']
-                                # Convert gap to points (1 point = 1/72 inch)
-                                space_before = max(0, gap * 72 / pdf.pages[0].height)
-                    
-                    # Calculate space after paragraph
-                    if para_idx < len(paragraphs) - 1:
-                        next_para = paragraphs[para_idx + 1]
-                        if next_para['lines']:
-                            first_line = next_para['lines'][0]
-                            if first_line['words']:
-                                # Calculate the actual gap between paragraphs
-                                gap = first_line['words'][0]['top'] - max_y1
-                                # Convert gap to points (1 point = 1/72 inch)
-                                space_after = max(0, gap * 72 / pdf.pages[0].height)
+                    # Create a frame at the exact position
+                    frame = Frame(
+                        x_pos,
+                        y_pos - font_size,  # Adjust for text height
+                        page_width - x_pos,  # Width from position to right margin
+                        font_size * 1.2,     # Height for single line
+                        showBoundary=0
+                    )
 
-                    # Calculate average line height and spacing
-                    if line_heights:
-                        avg_line_height = sum(line_heights) / len(line_heights)
-                        # Convert to points (1 point = 1/72 inch)
-                        avg_line_height = avg_line_height * 72 / pdf.pages[0].height
-                    else:
-                        avg_line_height = font_size * 1.2
+                    # Create paragraph style with exact positioning
+                    style = ParagraphStyle(
+                        name=f'Line_{line_idx}',
+                        fontName=font_name,
+                        fontSize=font_size,
+                        leading=font_size * 1.2,
+                        textColor=Color(r, g, b),
+                        alignment=TA_JUSTIFY,
+                        spaceBefore=0,
+                        spaceAfter=0,
+                        leftIndent=0,
+                        rightIndent=0,
+                        firstLineIndent=0
+                    )
 
-                    # Calculate line spacing based on the gaps between lines
-                    line_spacing = 0
-                    if len(line_positions) > 1:
-                        gaps = []
-                        for i in range(len(line_positions) - 1):
-                            gap = line_positions[i + 1]['top'] - line_positions[i]['bottom']
-                            gaps.append(gap)
-                        if gaps:
-                            avg_gap = sum(gaps) / len(gaps)
-                            # Convert gap to points (1 point = 1/72 inch)
-                            line_spacing = avg_gap * 72 / pdf.pages[0].height
+                    # Create paragraph and add to frame
+                    para = Paragraph(line_text, style)
+                    frame.addFromList([para], doc_template)
 
-                    # Adjust first line indent if it's significantly different
-                    if first_line_indent > font_size * 0.5:  # If first line is indented by more than half a font size
-                        calculated_first_line_indent = max(0, first_line_x0 - doc_template.leftMargin - left_indent)
-                        style = ParagraphStyle(
-                            name='JustifiedWithFirstLineIndent',
-                            fontName=font_name,
-                            fontSize=font_size,
-                            leading=avg_line_height + line_spacing,  # Add line spacing to leading
-                            textColor=Color(r, g, b),
-                            alignment=TA_JUSTIFY,
-                            spaceAfter=space_after,
-                            spaceBefore=space_before,
-                            leftIndent=left_indent,
-                            rightIndent=right_indent,
-                            firstLineIndent=calculated_first_line_indent,
-                        )
-                    else:
-                        style = ParagraphStyle(
-                            name='JustifiedWithBlockIndent',
-                            fontName=font_name,
-                            fontSize=font_size,
-                            leading=avg_line_height + line_spacing,  # Add line spacing to leading
-                            textColor=Color(r, g, b),
-                            alignment=TA_JUSTIFY,
-                            spaceAfter=space_after,
-                            spaceBefore=space_before,
-                            leftIndent=left_indent,
-                            rightIndent=right_indent,
-                            firstLineIndent=0,
-                        )
-
-                    para_obj = Paragraph(para_text, style)
-                    story.append(para_obj)
-
-                # Add a page break after each page's content except the last
+                # Add page break after each page except the last
                 if page_idx < len(page_numbers) - 1:
                     story.append(PageBreak())
 
-            # Add page numbers using onPage callback
-            def add_page_number(canvas, doc):
-                canvas.drawCentredString(page_width/2, 30, str(doc.page))
-
-            # Build the document with the story and page number callback
-            doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
-
+            # Build the document
+            doc_template.build(story)
             doc.close()
             logger.info("PDF saved successfully with original formatting")
+            
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
