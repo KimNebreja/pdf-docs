@@ -833,6 +833,15 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 if not page_lines:
                     continue
 
+                # Create a frame for the entire page
+                page_frame = Frame(
+                    0,  # x position
+                    0,  # y position
+                    page_width,  # width
+                    page_height,  # height
+                    showBoundary=0
+                )
+
                 # Process each line individually to maintain exact positioning
                 for line_idx, line in enumerate(page_lines):
                     if not line['words']:
@@ -857,15 +866,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     # Calculate exact position
                     x_pos = first_word['x0']
                     y_pos = page_height - first_word['top']  # Convert to bottom-up coordinates
-                    
-                    # Create a frame at the exact position
-                    frame = Frame(
-                        x_pos,
-                        y_pos - font_size,  # Adjust for text height
-                        page_width - x_pos,  # Width from position to right margin
-                        font_size * 1.2,     # Height for single line
-                        showBoundary=0
-                    )
 
                     # Create paragraph style with exact positioning
                     style = ParagraphStyle(
@@ -877,14 +877,25 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         alignment=TA_JUSTIFY,
                         spaceBefore=0,
                         spaceAfter=0,
-                        leftIndent=0,
+                        leftIndent=x_pos,  # Use x_pos as left indent
                         rightIndent=0,
                         firstLineIndent=0
                     )
 
-                    # Create paragraph and add to frame
+                    # Create paragraph with exact positioning
                     para = Paragraph(line_text, style)
-                    frame.addFromList([para], doc_template)
+                    
+                    # Add vertical spacing to position the text
+                    if line_idx > 0:
+                        prev_line = page_lines[line_idx - 1]
+                        if prev_line['words']:
+                            prev_bottom = prev_line['words'][-1]['bottom']
+                            curr_top = first_word['top']
+                            space = curr_top - prev_bottom
+                            if space > 0:
+                                story.append(Spacer(1, space))
+
+                    story.append(para)
 
                 # Add page break after each page except the last
                 if page_idx < len(page_numbers) - 1:
