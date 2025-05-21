@@ -833,15 +833,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 if not page_lines:
                     continue
 
-                # Create a frame for the entire page
-                page_frame = Frame(
-                    0,  # x position
-                    0,  # y position
-                    page_width,  # width
-                    page_height,  # height
-                    showBoundary=0
-                )
-
                 # Process each line individually to maintain exact positioning
                 for line_idx, line in enumerate(page_lines):
                     if not line['words']:
@@ -852,6 +843,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     
                     # Get the first word's properties for styling
                     first_word = line['words'][0]
+                    last_word = line['words'][-1]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
                     
@@ -863,11 +855,17 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
 
-                    # Calculate exact position
+                    # Calculate exact position and width
                     x_pos = first_word['x0']
                     y_pos = page_height - first_word['top']  # Convert to bottom-up coordinates
+                    
+                    # Calculate the actual width of the text block
+                    text_width = last_word['x0'] + last_word['width'] - first_word['x0']
+                    
+                    # Calculate right margin to maintain justification
+                    right_margin = page_width - (last_word['x0'] + last_word['width'])
 
-                    # Create paragraph style with exact positioning
+                    # Create paragraph style with exact positioning and justification
                     style = ParagraphStyle(
                         name=f'Line_{line_idx}',
                         fontName=font_name,
@@ -877,8 +875,8 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         alignment=TA_JUSTIFY,
                         spaceBefore=0,
                         spaceAfter=0,
-                        leftIndent=x_pos,  # Use x_pos as left indent
-                        rightIndent=0,
+                        leftIndent=x_pos,
+                        rightIndent=right_margin,
                         firstLineIndent=0
                     )
 
