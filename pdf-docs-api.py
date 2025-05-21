@@ -674,20 +674,12 @@ def extract_text_with_formatting(pdf_path):
                     keep_blank_chars=True,
                     x_tolerance=3,
                     y_tolerance=3,
-                    extra_attrs=['fontname', 'size', 'upright', 'fontweight', 'fontstyle']
+                    extra_attrs=['fontname', 'size', 'upright']
                 )
                 
                 # Group words into lines based on y-position
                 lines = {}
-                for i, word in enumerate(words):
-                    # Add default values for potentially missing attributes
-                    word.setdefault('fontweight', 0)
-                    word.setdefault('fontstyle', '')
-                    
-                    # Log the first few word dictionaries to inspect their structure
-                    if i < 10:
-                        logger.info(f"Word {i}: {word}")
-                    
+                for word in words:
                     y_pos = round(word['top'], 1)  # Round to 1 decimal place for grouping
                     if y_pos not in lines:
                         lines[y_pos] = []
@@ -701,7 +693,7 @@ def extract_text_with_formatting(pdf_path):
                     # Sort words in line by x-position (left to right)
                     line_words.sort(key=lambda x: x['x0'])
                     
-                    # Create a line object with formatting, including default values for missing attributes
+                    # Create a line object with formatting
                     line_obj = {
                         'text': ' '.join([w['text'] for w in line_words]),
                         'words': line_words,
@@ -779,23 +771,20 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     try:
         register_fonts()
         # Use standard letter size for output
+        # Keep margins for the overall document structure
         doc_template = SimpleDocTemplate(
             pdf_path,
             pagesize=letter,
             leftMargin=72, rightMargin=72, topMargin=72, bottomMargin=72
         )
         page_width, page_height = letter
-        
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
             formatted_lines = extract_text_with_formatting(original_pdf_path)
-            
-            # Process text and create corrected lines
             if isinstance(text, str):
                 proofread_words = text.split()
             else:
                 proofread_words = ' '.join(text).split()
-                
             original_words = []
             line_word_indices = []
             idx = 0
@@ -806,7 +795,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 end = idx
                 line_word_indices.append((start, end))
                 original_words.extend(words)
-                
             sm = difflib.SequenceMatcher(None, original_words, proofread_words)
             corrected_words = list(original_words)
             opcodes = sm.get_opcodes()
@@ -815,11 +803,9 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     corrected_words[i1:i2] = proofread_words[j1:j2]
                 elif tag == 'delete':
                     corrected_words[i1:i2] = []
-                    
             corrected_lines = []
             for start, end in line_word_indices:
                 corrected_lines.append(' '.join(corrected_words[start:end]))
-                
             # Group lines by page number
             lines_by_page = defaultdict(list)
             for i, line in enumerate(formatted_lines):
@@ -844,146 +830,93 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     if not para_lines:
                         continue
 
-                    # Get the first line's properties
-                    first_line = para_lines[0]
-                    if not first_line['words']:
-                        continue
-                        
-                    first_word = first_line['words'][0]
+                    # Calculate the minimum x0 for this paragraph
+                    min_x0 = float('inf')
+                    max_x1 = float('-inf')
+
+                    for line in para_lines:
+                        if line['words']: # Ensure line is not empty
+                            min_x0 = min(min_x0, line['words'][0]['x0'])
+                            max_x1 = max(max_x1, line['words'][-1]['x0'] + line['words'][-1]['width'])
+
+                    if min_x0 == float('inf') or max_x1 == float('-inf'):
+                         continue # Skip if no words found in paragraph lines
+
+                    first_word = para_lines[0]['words'][0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
-                    
-                    # Get color from the first word
-                    mupdf_page = doc[first_line['page']]
-                    bbox = fitz.Rect(first_word['x0'], first_word['top'], 
-                                   first_word['x0'] + first_word['width'], first_word['bottom'])
+                    mupdf_page = doc[para_lines[0]['page']]
+                    # Use the bounding box of the first line for color detection
+                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
 
-                    # Calculate indentation values
-                    first_line_x0 = first_word['x0']
-                    first_line_x1 = first_word['x0'] + first_word['width']
-                    
-                    # Calculate the base indentation (minimum x0 of all lines)
-                    base_indent = float('inf')
-                    for line in para_lines:
-                        if line['words']:
-                            base_indent = min(base_indent, line['words'][0]['x0'])
-                    
-                    # Calculate first line indent relative to base indent
-                    first_line_indent = max(0, first_line_x0 - base_indent)
-                    
-                    # Calculate left indent relative to page margin
-                    left_indent = max(0, base_indent - doc_template.leftMargin)
-                    
-                    # Calculate right indent
-                    max_x1 = float('-inf')
-                    for line in para_lines:
-                        if line['words']:
-                            last_word = line['words'][-1]
-                            max_x1 = max(max_x1, last_word['x0'] + last_word['width'])
+                    # Calculate left indent based on the paragraph's minimum x0 relative to the margin
+                    left_indent = max(0, min_x0 - doc_template.leftMargin)
+
+                    # Calculate right indent from the right edge of the text block to the right margin
                     right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
 
-                    # Create paragraph style with exact indentation and text formatting
-                    style = ParagraphStyle(
-                        name=f'ParaStyle_{page_num}_{len(story)}',
-                        fontName=font_name,
-                        fontSize=font_size,
-                        leading=font_size * 1.2,
-                        textColor=Color(r, g, b),
-                        alignment=TA_JUSTIFY,
-                        spaceAfter=font_size * 0.5,
-                        spaceBefore=0,
-                        leftIndent=left_indent,
-                        rightIndent=right_indent,
-                        firstLineIndent=first_line_indent
-                    )
+                    # Calculate first line indent if it differs from the paragraph's overall left indent
+                    first_line_x0 = para_lines[0]['words'][0]['x0'] if para_lines[0]['words'] else min_x0
+                    first_line_indent = max(0, first_line_x0 - min_x0) # Indent relative to paragraph's left edge
 
-                    # Process text formatting for each word in the paragraph
-                    formatted_text = []
-                    current_pos = 0
-                    
-                    for line in para_lines:
-                        for word in line['words']:
-                            # Add default values for potentially missing attributes
-                            word.setdefault('fontweight', 0)
-                            word.setdefault('fontstyle', '')
-                            
-                            # Get word formatting
-                            word_font = get_font_name(word.get('fontname', 'Helvetica'))
-                            word_size = float(word.get('size', font_size))
-                            word_color = get_text_color(mupdf_page, fitz.Rect(word['x0'], word['top'], 
-                                                                           word['x0'] + word['width'], word['bottom']))
-                            r, g, b = normalize_color(word_color) if word_color else (0, 0, 0)
-                            
-                            # Check for bold, italic, and underline, providing default values
-                            is_bold = 'bold' in word_font.lower() or word.get('fontweight', 0) > 500
-                            is_italic = 'italic' in word_font.lower() or word.get('fontstyle', '').lower() == 'italic'
-                            is_underline = word.get('underline', False)
-                            
-                            # Determine the correct font name for the style
-                            final_font_name = word_font
-                            if is_bold and is_italic:
-                                # Try bold italic, fallback to bold or italic or normal
-                                if pdfmetrics.hasFont(f'{word_font}-BoldItalic'):
-                                    final_font_name = f'{word_font}-BoldItalic'
-                                elif pdfmetrics.hasFont(f'{word_font}-Bold'):
-                                     final_font_name = f'{word_font}-Bold'
-                                elif pdfmetrics.hasFont(f'{word_font}-Italic'):
-                                     final_font_name = f'{word_font}-Italic'
-                            elif is_bold:
-                                # Try bold, fallback to normal
-                                if pdfmetrics.hasFont(f'{word_font}-Bold'):
-                                    final_font_name = f'{word_font}-Bold'
-                            elif is_italic:
-                                # Try italic, fallback to normal
-                                if pdfmetrics.hasFont(f'{word_font}-Italic'):
-                                    final_font_name = f'{word_font}-Italic'
-                                    
-                            # If the determined font name is not registered, fallback to a safe default
-                            if not pdfmetrics.hasFont(final_font_name):
-                                logger.warning(f"Font {final_font_name} not registered, falling back to Helvetica")
-                                final_font_name = 'Helvetica'
-                                
-                            # Create word style
-                            word_style = ParagraphStyle(
-                                name=f'WordStyle_{len(formatted_text)}',
-                                parent=style,
-                                fontName=final_font_name,
-                                fontSize=word_size,
-                                textColor=Color(r, g, b)
-                            )
-                            
-                            # Add formatting tags
-                            word_text = word['text']
-                            if is_bold:
-                                word_text = f'<b>{word_text}</b>'
-                            if is_italic:
-                                word_text = f'<i>{word_text}</i>'
-                            if is_underline:
-                                word_text = f'<u>{word_text}</u>'
-                                
-                            formatted_text.append(f'<span style="{word_style.name}">{word_text}</span>')
-                            current_pos += len(word['text']) + 1  # +1 for space
-                    
-                    # Create and add paragraph with formatted text
-                    para_text = ' '.join(formatted_text)
+                    # Adjust left indent if the first line indent is significantly different
+                    # This is a heuristic and might need tuning
+                    if first_line_indent > font_size * 0.5: # If first line is indented by more than half a font size
+                         # Treat it as a first line indent
+                         calculated_first_line_indent = max(0, first_line_x0 - doc_template.leftMargin - left_indent)
+                         style = ParagraphStyle(
+                              name='JustifiedWithFirstLineIndent',
+                              fontName=font_name,
+                              fontSize=font_size,
+                              leading=font_size * 1.2,
+                              textColor=Color(r, g, b),
+                              alignment=TA_JUSTIFY,
+                              spaceAfter=font_size * 0.5,
+                              spaceBefore=0,
+                              leftIndent=left_indent, # Apply the overall block indent
+                              rightIndent=right_indent,
+                              firstLineIndent=calculated_first_line_indent, # Apply calculated first line indent
+                         )
+                    else:
+                        # Otherwise, assume it's a regular block indent or no indent
+                         style = ParagraphStyle(
+                              name='JustifiedWithBlockIndent',
+                              fontName=font_name,
+                              fontSize=font_size,
+                              leading=font_size * 1.2,
+                              textColor=Color(r, g, b),
+                              alignment=TA_JUSTIFY,
+                              spaceAfter=font_size * 0.5,
+                              spaceBefore=0,
+                              leftIndent=left_indent, # Apply the calculated left indent
+                              rightIndent=right_indent, # Apply the calculated right indent
+                              firstLineIndent=0, # No special first line indent
+                         )
+
+
                     para_obj = Paragraph(para_text, style)
                     story.append(para_obj)
+                    # Add space after the paragraph
                     story.append(Spacer(1, style.spaceAfter))
 
-                # Add page break if not the last page
+                # Add a page break after each page's content except the last
+                # This preserves the original page structure
                 if page_idx < len(page_numbers) - 1:
                     story.append(PageBreak())
 
-            # Add page numbers
+            # Add page numbers using onPage callback
             def add_page_number(canvas, doc):
+                # Position page number at the bottom center
                 canvas.drawCentredString(page_width/2, 30, str(doc.page))
 
-            # Build the document
+            # Build the document with the story and page number callback
+            # Pass the canvas and document to the callback for positioning
             doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+
+
             doc.close()
-            
             logger.info("PDF saved successfully with original formatting")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
