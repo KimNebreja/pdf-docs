@@ -921,11 +921,35 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             is_italic = 'italic' in word_font.lower() or word.get('fontstyle', '').lower() == 'italic'
                             is_underline = word.get('underline', False)
                             
+                            # Determine the correct font name for the style
+                            final_font_name = word_font
+                            if is_bold and is_italic:
+                                # Try bold italic, fallback to bold or italic or normal
+                                if pdfmetrics.hasFont(f'{word_font}-BoldItalic'):
+                                    final_font_name = f'{word_font}-BoldItalic'
+                                elif pdfmetrics.hasFont(f'{word_font}-Bold'):
+                                     final_font_name = f'{word_font}-Bold'
+                                elif pdfmetrics.hasFont(f'{word_font}-Italic'):
+                                     final_font_name = f'{word_font}-Italic'
+                            elif is_bold:
+                                # Try bold, fallback to normal
+                                if pdfmetrics.hasFont(f'{word_font}-Bold'):
+                                    final_font_name = f'{word_font}-Bold'
+                            elif is_italic:
+                                # Try italic, fallback to normal
+                                if pdfmetrics.hasFont(f'{word_font}-Italic'):
+                                    final_font_name = f'{word_font}-Italic'
+                                    
+                            # If the determined font name is not registered, fallback to a safe default
+                            if not pdfmetrics.hasFont(final_font_name):
+                                logger.warning(f"Font {final_font_name} not registered, falling back to Helvetica")
+                                final_font_name = 'Helvetica'
+                                
                             # Create word style
                             word_style = ParagraphStyle(
                                 name=f'WordStyle_{len(formatted_text)}',
                                 parent=style,
-                                fontName=word_font,
+                                fontName=final_font_name,
                                 fontSize=word_size,
                                 textColor=Color(r, g, b)
                             )
