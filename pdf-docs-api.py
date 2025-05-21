@@ -864,6 +864,7 @@ def save_text_to_pdf(original_text, proofread_text, selected_suggestions, pdf_pa
                  lines_by_page[page_num].append(line_obj)
                  current_line_index += 1
 
+            # Now iterate through the pages to draw them
             page_numbers = sorted(lines_by_page.keys())
 
             for page_idx, page_num in enumerate(page_numbers):
