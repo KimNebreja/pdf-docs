@@ -769,146 +769,108 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
     """
     try:
-        register_fonts()
+        # Open the original PDF to get its structure
+        doc = fitz.open(original_pdf_path)
+        formatted_lines = extract_text_with_formatting(original_pdf_path)
+        
+        if isinstance(text, str):
+            proofread_words = text.split()
+        else:
+            proofread_words = ' '.join(text).split()
+            
+        original_words = []
+        line_word_indices = []
+        idx = 0
+        for line in formatted_lines:
+            words = line['text'].split()
+            start = idx
+            idx += len(words)
+            end = idx
+            line_word_indices.append((start, end))
+            original_words.extend(words)
+            
+        sm = difflib.SequenceMatcher(None, original_words, proofread_words)
+        corrected_words = list(original_words)
+        opcodes = sm.get_opcodes()
+        for tag, i1, i2, j1, j2 in opcodes:
+            if tag in ('replace', 'insert'):
+                corrected_words[i1:i2] = proofread_words[j1:j2]
+            elif tag == 'delete':
+                corrected_words[i1:i2] = []
+                
+        corrected_lines = []
+        for start, end in line_word_indices:
+            corrected_lines.append(' '.join(corrected_words[start:end]))
+
         # Create a new PDF with the same dimensions as the original
-        with pdfplumber.open(original_pdf_path) as pdf:
-            original_page = pdf.pages[0]
-            page_width = original_page.width
-            page_height = original_page.height
+        new_doc = fitz.open()
+        
+        # Group lines by page number
+        lines_by_page = defaultdict(list)
+        for i, line in enumerate(formatted_lines):
+            line = dict(line)
+            line['line_index'] = i
+            lines_by_page[line.get('page', 0)].append(line)
+
+        # Process each page
+        for page_num in sorted(lines_by_page.keys()):
+            # Get the original page
+            orig_page = doc[page_num]
             
-            # Create a new PDF with the same dimensions
-            doc_template = SimpleDocTemplate(
-                pdf_path,
-                pagesize=(page_width, page_height),
-                leftMargin=0,
-                rightMargin=0,
-                topMargin=0,
-                bottomMargin=0
-            )
-
-            doc = fitz.open(original_pdf_path)
-            formatted_lines = extract_text_with_formatting(original_pdf_path)
+            # Create a new page with the same dimensions
+            new_page = new_doc.new_page(width=orig_page.rect.width, height=orig_page.rect.height)
             
-            if isinstance(text, str):
-                proofread_words = text.split()
-            else:
-                proofread_words = ' '.join(text).split()
-                
-            original_words = []
-            line_word_indices = []
-            idx = 0
-            for line in formatted_lines:
-                words = line['text'].split()
-                start = idx
-                idx += len(words)
-                end = idx
-                line_word_indices.append((start, end))
-                original_words.extend(words)
-                
-            sm = difflib.SequenceMatcher(None, original_words, proofread_words)
-            corrected_words = list(original_words)
-            opcodes = sm.get_opcodes()
-            for tag, i1, i2, j1, j2 in opcodes:
-                if tag in ('replace', 'insert'):
-                    corrected_words[i1:i2] = proofread_words[j1:j2]
-                elif tag == 'delete':
-                    corrected_words[i1:i2] = []
-                    
-            corrected_lines = []
-            for start, end in line_word_indices:
-                corrected_lines.append(' '.join(corrected_words[start:end]))
-
-            # Group lines by page number
-            lines_by_page = defaultdict(list)
-            for i, line in enumerate(formatted_lines):
-                line = dict(line)
-                line['line_index'] = i
-                lines_by_page[line.get('page', 0)].append(line)
-
-            story = []
-            page_numbers = sorted(lines_by_page.keys())
-
-            for page_idx, page_num in enumerate(page_numbers):
-                page_lines = lines_by_page[page_num]
-                if not page_lines:
+            # Get lines for this page
+            page_lines = lines_by_page[page_num]
+            
+            # Process each line
+            for line_idx, line in enumerate(page_lines):
+                if not line['words']:
                     continue
 
-                # Create a frame for the entire page
-                page_frame = Frame(
-                    0,  # x position
-                    0,  # y position
-                    page_width,  # width
-                    page_height,  # height
-                    showBoundary=0
+                # Get the corrected text for this line
+                line_text = corrected_lines[line['line_index']]
+                
+                # Get the first word's properties for styling
+                first_word = line['words'][0]
+                last_word = line['words'][-1]
+                
+                # Get font information
+                font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                font_size = float(first_word.get('size', 11))
+                
+                # Get text color
+                bbox = fitz.Rect(first_word['x0'], first_word['top'], 
+                               first_word['x0'] + first_word['width'], 
+                               first_word['bottom'])
+                color = get_text_color(orig_page, bbox)
+                r, g, b = normalize_color(color) if color else (0, 0, 0)
+                
+                # Calculate text position
+                x_pos = first_word['x0']
+                y_pos = first_word['top']
+                
+                # Calculate text width
+                text_width = last_word['x0'] + last_word['width'] - first_word['x0']
+                
+                # Create text insertion point
+                point = fitz.Point(x_pos, y_pos)
+                
+                # Insert text with exact positioning
+                new_page.insert_text(
+                    point,
+                    line_text,
+                    fontname=font_name,
+                    fontsize=font_size,
+                    color=(r, g, b)
                 )
 
-                # Process each line individually to maintain exact positioning
-                for line_idx, line in enumerate(page_lines):
-                    if not line['words']:
-                        continue
-
-                    # Get the corrected text for this line
-                    line_text = corrected_lines[line['line_index']]
-                    
-                    # Get the first word's properties for styling
-                    first_word = line['words'][0]
-                    last_word = line['words'][-1]
-                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                    font_size = float(first_word.get('size', 11))
-                    
-                    # Get text color
-                    mupdf_page = doc[line['page']]
-                    bbox = fitz.Rect(first_word['x0'], first_word['top'], 
-                                   first_word['x0'] + first_word['width'], 
-                                   first_word['bottom'])
-                    color = get_text_color(mupdf_page, bbox)
-                    r, g, b = normalize_color(color) if color else (0, 0, 0)
-
-                    # Calculate exact position
-                    x_pos = first_word['x0']
-                    y_pos = page_height - first_word['top']  # Convert to bottom-up coordinates
-                    
-                    # Calculate the width of the text block
-                    text_width = last_word['x0'] + last_word['width'] - first_word['x0']
-
-                    # Create paragraph style with exact positioning
-                    style = ParagraphStyle(
-                        name=f'Line_{line_idx}',
-                        fontName=font_name,
-                        fontSize=font_size,
-                        leading=font_size * 1.2,
-                        textColor=Color(r, g, b),
-                        alignment=TA_JUSTIFY,
-                        spaceBefore=0,
-                        spaceAfter=0,
-                        leftIndent=x_pos,
-                        rightIndent=page_width - (x_pos + text_width),
-                        firstLineIndent=0
-                    )
-
-                    # Create paragraph
-                    para = Paragraph(line_text, style)
-                    
-                    # Add vertical spacing to position the text
-                    if line_idx > 0:
-                        prev_line = page_lines[line_idx - 1]
-                        if prev_line['words']:
-                            prev_bottom = prev_line['words'][-1]['bottom']
-                            curr_top = first_word['top']
-                            space = curr_top - prev_bottom
-                            if space > 0:
-                                story.append(Spacer(1, space))
-
-                    story.append(para)
-
-                # Add page break after each page except the last
-                if page_idx < len(page_numbers) - 1:
-                    story.append(PageBreak())
-
-            # Build the document
-            doc_template.build(story)
-            doc.close()
-            logger.info("PDF saved successfully with original formatting")
+        # Save the new PDF
+        new_doc.save(pdf_path)
+        new_doc.close()
+        doc.close()
+        
+        logger.info("PDF saved successfully with original formatting")
             
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
