@@ -784,7 +784,8 @@ def save_text_to_pdf(original_text, proofread_text, selected_suggestions, pdf_pa
             final_corrected_text = proofread_text
             for original_word, selected_word in selected_suggestions.items():
                 # Use a regex to replace only whole words to avoid unintended replacements
-                final_corrected_text = re.sub(r'\b' + re.escape(original_word) + r'\b', re.escape(selected_word), final_corrected_text)
+                # Do not escape the selected_word
+                final_corrected_text = re.sub(r'\b' + re.escape(original_word) + r'\b', selected_word, final_corrected_text)
 
             # Split original text while preserving whitespace
             if isinstance(original_text, str):
@@ -799,7 +800,7 @@ def save_text_to_pdf(original_text, proofread_text, selected_suggestions, pdf_pa
             sm = difflib.SequenceMatcher(None, original_chars, final_corrected_chars)
             opcodes = sm.get_opcodes()
             
-            # Apply corrections at character level and create a mapping
+            # Create a mapping from original character index to corrected character index
             original_to_corrected_map = {}
             corrected_index = 0
             original_index = 0
@@ -836,28 +837,14 @@ def save_text_to_pdf(original_text, proofread_text, selected_suggestions, pdf_pa
                  corrected_index += 1
 
             corrected_line_texts = []
+            current_original_char_flat_index = 0
             for line in formatted_lines:
                 original_line_text = line['text']
-                original_line_chars = list(original_line_text)
+                original_line_length = len(original_line_text)
                 
-                # Find the starting index of this line in the flattened original_chars list
-                original_line_start_index = -1
-                current_flat_index = 0
-                found_start = False
-                for i, l in enumerate(formatted_lines):
-                     if l == line:
-                          original_line_start_index = current_flat_index
-                          found_start = True
-                          break
-                     current_flat_index += len(list(l['text']))
-
-                if not found_start:
-                    corrected_line_texts.append(original_line_text) # Fallback
-                    continue
-
                 corrected_line_chars = []
-                for i in range(len(original_line_chars)):
-                    original_char_flat_index = original_line_start_index + i
+                for i in range(original_line_length):
+                    original_char_flat_index = current_original_char_flat_index + i
                     if original_char_flat_index in original_to_corrected_map:
                         corrected_char_index = original_to_corrected_map[original_char_flat_index]
                         if corrected_char_index is not None and corrected_char_index < len(final_corrected_chars):
@@ -865,13 +852,18 @@ def save_text_to_pdf(original_text, proofread_text, selected_suggestions, pdf_pa
                         # else: character was deleted or insertion point, skip
 
                 corrected_line_texts.append(''.join(corrected_line_chars))
+                current_original_char_flat_index += original_line_length
             
-            # Group lines by page number
+            # Group lines by page number (using the updated corrected_line_texts)
             lines_by_page = defaultdict(list)
-            for i, line in enumerate(formatted_lines):
-                line = dict(line)
-                line['line_index'] = i
-                lines_by_page[line.get('page', 0)].append(line)
+            current_line_index = 0
+            for page_num in sorted(lines_by_page.keys()): # Iterate through pages based on original structure
+                 for line in formatted_lines:
+                      if line.get('page', 0) == page_num:
+                            line_obj = dict(line)
+                            line_obj['corrected_text'] = corrected_line_texts[current_line_index]
+                            lines_by_page[page_num].append(line_obj)
+                            current_line_index += 1
 
             page_numbers = sorted(lines_by_page.keys())
 
@@ -885,16 +877,13 @@ def save_text_to_pdf(original_text, proofread_text, selected_suggestions, pdf_pa
 
                 # Draw lines and words with original formatting and position
                 for line in page_lines:
-                    line_text_corrected = corrected_line_texts[line['line_index']]
+                    line_text_corrected = line['corrected_text']
                     words_in_line = line['words']
                     
                     # Calculate horizontal offset for the line based on the first word's x0
-                    if words_in_line:
-                        x_offset = words_in_line[0]['x0']
-                    else:
-                        x_offset = 0 # Default offset
+                    x_offset = words_in_line[0]['x0'] if words_in_line else 0 # Default offset
 
-                    # Simple approach: just draw the entire corrected line at the original line's start position
+                    # Use the first word of the original line for formatting information
                     if words_in_line:
                         first_word = words_in_line[0]
                         font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
