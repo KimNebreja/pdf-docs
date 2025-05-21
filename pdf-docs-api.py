@@ -982,26 +982,26 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     spacing = para.get('spacing', {})
 
                     # Calculate line spacing within the paragraph (leading)
-                    # Ensure leading is at least 1.2 times the font size to prevent overlap
-                    detected_avg_line_spacing = spacing.get('avg_line_spacing', font_size * 1.2) # Default to 1.2 * font_size if not detected
-                    # Ensure leading is never less than a safe minimum
-                    leading = max(detected_avg_line_spacing, font_size * 1.25) # Use detected or fallback, but ensure a safe minimum
+                    # Ensure leading is at least 1.15 times the font size (slightly reduced from 1.25) to prevent overlap
+                    detected_avg_line_spacing = spacing.get('avg_line_spacing', font_size * 1.2) # Default still reasonably safe
+                    # Ensure leading is never less than a slightly less aggressive safe minimum
+                    leading = max(detected_avg_line_spacing, font_size * 1.15) # Use detected or fallback, but ensure a slightly lower safe minimum
 
                     # Calculate space before the paragraph
-                    detected_space_before = spacing.get('before', font_size * 0.8) # Default to 0.8 * font_size if not detected
+                    detected_space_before = spacing.get('before', font_size * 0.7) # Default slightly reduced
                     # Ensure spaceBefore meets a minimum threshold, especially for paragraphs that aren't the very first
-                    min_space_before = font_size * 0.2 if para_idx > 0 or page_idx > 0 else 0 # Small minimum space
+                    min_space_before = font_size * 0.15 if para_idx > 0 or page_idx > 0 else 0 # Slightly lower small minimum space
                     space_before = max(detected_space_before, min_space_before)
 
                     # Calculate space after the paragraph
-                    detected_space_after = spacing.get('after', font_size * 0.8) # Default to 0.8 * font_size if not detected
+                    detected_space_after = spacing.get('after', font_size * 0.7) # Default slightly reduced
                     # Ensure spaceAfter meets a minimum threshold, especially for paragraphs that aren't the very last
-                    min_space_after = font_size * 0.2 if para_idx < len(paragraphs) - 1 or page_idx < len(page_numbers) - 1 else 0 # Small minimum space
+                    min_space_after = font_size * 0.15 if para_idx < len(paragraphs) - 1 or page_idx < len(page_numbers) - 1 else 0 # Slightly lower small minimum space
                     space_after = max(detected_space_after, min_space_after)
 
                     # Create paragraph style with precise spacing
                     # Apply firstLineIndent only if it's significantly different from the overall left indent
-                    if first_line_indent_relative > font_size * 0.3: # Adjusted threshold
+                    if first_line_indent_relative > font_size * 0.3: # Keep this threshold for first line indent
                         style = ParagraphStyle(
                             name='JustifiedWithFirstLineIndent',
                             fontName=font_name,
