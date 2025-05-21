@@ -770,86 +770,59 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     try:
         register_fonts()
-        # Use standard letter size for output
-        # Keep margins for the overall document structure
-        doc_template = SimpleDocTemplate(
-            pdf_path,
-            pagesize=letter,
-            leftMargin=72, rightMargin=72, topMargin=72, bottomMargin=72
-        )
+        
+        packet = io.BytesIO()
+        # Create a new PDF canvas
+        c = canvas.Canvas(packet, pagesize=letter)
         page_width, page_height = letter
+        
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
             formatted_lines = extract_text_with_formatting(original_pdf_path)
             
             # Split text while preserving whitespace
             if isinstance(text, str):
-                # Split text into words while preserving multiple spaces
-                proofread_words = []
-                current_word = []
-                for char in text:
-                    if char.isspace():
-                        if current_word:
-                            proofread_words.append(''.join(current_word))
-                            current_word = []
-                        proofread_words.append(char)
-                    else:
-                        current_word.append(char)
-                if current_word:
-                    proofread_words.append(''.join(current_word))
+                proofread_chars = list(text)
             else:
-                proofread_words = ' '.join(text).split()
+                proofread_chars = list(' '.join(text))
             
-            original_words = []
-            line_word_indices = []
+            original_chars = []
+            char_indices = []
             idx = 0
             for line in formatted_lines:
-                # Split line while preserving whitespace
-                words = []
-                current_word = []
-                for char in line['text']:
-                    if char.isspace():
-                        if current_word:
-                            words.append(''.join(current_word))
-                            current_word = []
-                        words.append(char)
-                    else:
-                        current_word.append(char)
-                if current_word:
-                    words.append(''.join(current_word))
-                
+                chars = list(line['text'])
                 start = idx
-                idx += len(words)
+                idx += len(chars)
                 end = idx
-                line_word_indices.append((start, end))
-                original_words.extend(words)
+                char_indices.append((start, end))
+                original_chars.extend(chars)
             
-            # Use difflib to match original and proofread text
-            sm = difflib.SequenceMatcher(None, original_words, proofread_words)
-            corrected_words = list(original_words)
+            # Use difflib to match original and proofread text at character level
+            sm = difflib.SequenceMatcher(None, original_chars, proofread_chars)
+            corrected_chars = list(original_chars)
             opcodes = sm.get_opcodes()
             
-            # Apply corrections while preserving whitespace
+            # Apply corrections at character level
+            offset = 0
             for tag, i1, i2, j1, j2 in opcodes:
-                if tag in ('replace', 'insert'):
-                    # Preserve whitespace from original text
-                    if i1 > 0 and original_words[i1-1].isspace():
-                        corrected_words[i1:i2] = [original_words[i1-1]] + proofread_words[j1:j2]
-                    else:
-                        corrected_words[i1:i2] = proofread_words[j1:j2]
+                if tag == 'replace':
+                    corrected_chars[i1+offset:i2+offset] = proofread_chars[j1:j2]
+                    offset += (j2 - j1) - (i2 - i1)
+                elif tag == 'insert':
+                    corrected_chars[i1+offset:i1+offset] = proofread_chars[j1:j2]
+                    offset += (j2 - j1)
                 elif tag == 'delete':
-                    corrected_words[i1:i2] = []
+                    del corrected_chars[i1+offset:i2+offset]
+                    offset -= (i2 - i1)
             
-            # Recombine lines while preserving whitespace
-            corrected_lines = []
-            for start, end in line_word_indices:
-                line_words = corrected_words[start:end]
-                # Preserve original line spacing
-                if line_words and line_words[0].isspace():
-                    corrected_lines.append(''.join(line_words))
-                else:
-                    corrected_lines.append(''.join(line_words))
-            
+            corrected_text_flat = ''.join(corrected_chars)
+            corrected_line_texts = []
+            current_char_index = 0
+            for start, end in char_indices:
+                 original_line_length = end - start
+                 corrected_line_texts.append(corrected_text_flat[current_char_index : current_char_index + original_line_length + (end - start - (opcodes[0][i2] - opcodes[0][i1])) ] )
+                 current_char_index += original_line_length + (end - start - (opcodes[0][i2] - opcodes[0][i1]))
+
             # Group lines by page number
             lines_by_page = defaultdict(list)
             for i, line in enumerate(formatted_lines):
@@ -857,135 +830,72 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 line['line_index'] = i
                 lines_by_page[line.get('page', 0)].append(line)
 
-            story = []
             page_numbers = sorted(lines_by_page.keys())
 
             for page_idx, page_num in enumerate(page_numbers):
+                if page_idx > 0:
+                    c.showPage()
+
                 page_lines = lines_by_page[page_num]
                 if not page_lines:
                     continue
 
-                # Detect paragraphs for this page
-                paragraphs = detect_paragraphs(page_lines)
-                for para_idx, para in enumerate(paragraphs):
-                    para_lines = para['lines']
-                    para_indices = [l['line_index'] for l in para_lines]
-                    para_text = ' '.join([corrected_lines[i] for i in para_indices])
-                    if not para_lines:
-                        continue
-
-                    # Calculate the minimum x0 for this paragraph
-                    min_x0 = float('inf')
-                    max_x1 = float('-inf')
-                    min_y0 = float('inf')
-                    max_y1 = float('-inf')
-
-                    for line in para_lines:
-                        if line['words']:  # Ensure line is not empty
-                            min_x0 = min(min_x0, line['words'][0]['x0'])
-                            max_x1 = max(max_x1, line['words'][-1]['x0'] + line['words'][-1]['width'])
-                            min_y0 = min(min_y0, line['words'][0]['top'])
-                            max_y1 = max(max_y1, line['words'][-1]['bottom'])
-
-                    if min_x0 == float('inf') or max_x1 == float('-inf'):
-                        continue  # Skip if no words found in paragraph lines
-
-                    first_word = para_lines[0]['words'][0]
-                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                    font_size = float(first_word.get('size', 11))
-                    mupdf_page = doc[para_lines[0]['page']]
+                # Draw lines and words with original formatting and position
+                for line in page_lines:
+                    line_text_corrected = corrected_line_texts[line['line_index']]
+                    words_in_line = line['words']
                     
-                    # Use the bounding box of the first line for color detection
-                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
-                    color = get_text_color(mupdf_page, bbox)
-                    r, g, b = normalize_color(color) if color else (0, 0, 0)
-
-                    # Calculate left indent based on the paragraph's minimum x0 relative to the margin
-                    left_indent = max(0, min_x0 - doc_template.leftMargin)
-
-                    # Calculate right indent from the right edge of the text block to the right margin
-                    right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
-
-                    # Calculate first line indent if it differs from the paragraph's overall left indent
-                    first_line_x0 = para_lines[0]['words'][0]['x0'] if para_lines[0]['words'] else min_x0
-                    first_line_indent = max(0, first_line_x0 - min_x0)  # Indent relative to paragraph's left edge
-
-                    # Calculate paragraph spacing
-                    space_before = 0
-                    space_after = 0
-                    
-                    # Calculate space before paragraph
-                    if para_idx > 0:
-                        prev_para = paragraphs[para_idx - 1]
-                        if prev_para['lines']:
-                            last_line = prev_para['lines'][-1]
-                            if last_line['words']:
-                                space_before = max(0, min_y0 - last_line['words'][-1]['bottom'])
-                    
-                    # Calculate space after paragraph
-                    if para_idx < len(paragraphs) - 1:
-                        next_para = paragraphs[para_idx + 1]
-                        if next_para['lines']:
-                            first_line = next_para['lines'][0]
-                            if first_line['words']:
-                                space_after = max(0, first_line['words'][0]['top'] - max_y1)
-
-                    # Calculate line height based on the average height of lines in the paragraph
-                    line_heights = []
-                    for line in para_lines:
-                        if line['words']:
-                            line_height = line['words'][-1]['bottom'] - line['words'][0]['top']
-                            line_heights.append(line_height)
-                    
-                    avg_line_height = sum(line_heights) / len(line_heights) if line_heights else font_size * 1.2
-
-                    # Adjust first line indent if it's significantly different
-                    if first_line_indent > font_size * 0.5:  # If first line is indented by more than half a font size
-                        calculated_first_line_indent = max(0, first_line_x0 - doc_template.leftMargin - left_indent)
-                        style = ParagraphStyle(
-                            name='JustifiedWithFirstLineIndent',
-                            fontName=font_name,
-                            fontSize=font_size,
-                            leading=avg_line_height,  # Use calculated average line height
-                            textColor=Color(r, g, b),
-                            alignment=TA_JUSTIFY,
-                            spaceAfter=space_after,
-                            spaceBefore=space_before,
-                            leftIndent=left_indent,
-                            rightIndent=right_indent,
-                            firstLineIndent=calculated_first_line_indent,
-                        )
+                    # Calculate horizontal offset for the line based on the first word's x0
+                    if words_in_line:
+                        x_offset = words_in_line[0]['x0']
                     else:
-                        style = ParagraphStyle(
-                            name='JustifiedWithBlockIndent',
-                            fontName=font_name,
-                            fontSize=font_size,
-                            leading=avg_line_height,  # Use calculated average line height
-                            textColor=Color(r, g, b),
-                            alignment=TA_JUSTIFY,
-                            spaceAfter=space_after,
-                            spaceBefore=space_before,
-                            leftIndent=left_indent,
-                            rightIndent=right_indent,
-                            firstLineIndent=0,
-                        )
+                        x_offset = 0 # Default offset
 
-                    para_obj = Paragraph(para_text, style)
-                    story.append(para_obj)
+                    # Draw text word by word to preserve internal spacing and formatting
+                    current_x = x_offset
+                    current_word_index = 0
 
-                # Add a page break after each page's content except the last
-                if page_idx < len(page_numbers) - 1:
-                    story.append(PageBreak())
+                    # Simple approach: just draw the entire corrected line at the original line's start position
+                    if words_in_line:
+                        first_word = words_in_line[0]
+                        font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                        font_size = float(first_word.get('size', 11))
+                        mupdf_page = doc[page_num] # Use the correct mupdf page object
+                        
+                        # Use the bounding box of the first word for color detection
+                        bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                        color = get_text_color(mupdf_page, bbox)
+                        r, g, b = normalize_color(color) if color else (0, 0, 0)
+                        
+                        c.setFont(font_name, font_size)
+                        c.setFillColorRGB(r, g, b)
+                        
+                        # Adjust y-coordinate to be relative to the bottom of the page
+                        # pdfplumber y is from top, reportlab y is from bottom
+                        y_pos_bottom = page_height - line['y_pos'] - (words_in_line[0]['bottom'] - words_in_line[0]['top'])
 
-            # Add page numbers using onPage callback
-            def add_page_number(canvas, doc):
-                canvas.drawCentredString(page_width/2, 30, str(doc.page))
+                        c.drawString(x_offset, y_pos_bottom, line_text_corrected)
 
-            # Build the document with the story and page number callback
-            doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+                # TODO: Add logic here to draw tables, headers, footers, etc. based on their detected positions
 
-            doc.close()
-            logger.info("PDF saved successfully with original formatting")
+            # Add page numbers
+            for page_num in page_numbers:
+                 # Switch to the correct page before drawing page number
+                c.setPageNumber(page_num + 1) # ReportLab page numbers are 1-based
+                c.setFillColorRGB(0, 0, 0) # Black color for page numbers
+                c.setFont('Helvetica', 9)
+                c.drawCentredString(page_width/2, 30, str(page_num + 1))
+
+            c.save()
+
+        # Move to the beginning of the StringIO buffer
+        packet.seek(0)
+
+        # Save the new PDF
+        with open(pdf_path, 'wb') as f:
+            f.write(packet.read())
+            
+        logger.info("PDF saved successfully with original formatting and position")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
