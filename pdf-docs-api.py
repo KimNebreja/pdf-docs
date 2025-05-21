@@ -674,7 +674,7 @@ def extract_text_with_formatting(pdf_path):
                     keep_blank_chars=True,
                     x_tolerance=3,
                     y_tolerance=3,
-                    extra_attrs=['fontname', 'size', 'upright']
+                    extra_attrs=['fontname', 'size', 'upright', 'fontweight', 'fontstyle']
                 )
                 
                 # Group words into lines based on y-position
@@ -876,7 +876,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             max_x1 = max(max_x1, last_word['x0'] + last_word['width'])
                     right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
 
-                    # Create paragraph style with exact indentation
+                    # Create paragraph style with exact indentation and text formatting
                     style = ParagraphStyle(
                         name=f'ParaStyle_{page_num}_{len(story)}',
                         fontName=font_name,
@@ -891,7 +891,47 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         firstLineIndent=first_line_indent
                     )
 
-                    # Create and add paragraph
+                    # Process text formatting for each word in the paragraph
+                    formatted_text = []
+                    current_pos = 0
+                    
+                    for line in para_lines:
+                        for word in line['words']:
+                            # Get word formatting
+                            word_font = get_font_name(word.get('fontname', 'Helvetica'))
+                            word_size = float(word.get('size', font_size))
+                            word_color = get_text_color(mupdf_page, fitz.Rect(word['x0'], word['top'], 
+                                                                           word['x0'] + word['width'], word['bottom']))
+                            r, g, b = normalize_color(word_color) if word_color else (0, 0, 0)
+                            
+                            # Check for bold, italic, and underline
+                            is_bold = 'bold' in word_font.lower() or word.get('fontweight', 0) > 500
+                            is_italic = 'italic' in word_font.lower() or word.get('fontstyle', '').lower() == 'italic'
+                            is_underline = word.get('underline', False)
+                            
+                            # Create word style
+                            word_style = ParagraphStyle(
+                                name=f'WordStyle_{len(formatted_text)}',
+                                parent=style,
+                                fontName=word_font,
+                                fontSize=word_size,
+                                textColor=Color(r, g, b)
+                            )
+                            
+                            # Add formatting tags
+                            word_text = word['text']
+                            if is_bold:
+                                word_text = f'<b>{word_text}</b>'
+                            if is_italic:
+                                word_text = f'<i>{word_text}</i>'
+                            if is_underline:
+                                word_text = f'<u>{word_text}</u>'
+                                
+                            formatted_text.append(f'<span style="{word_style.name}">{word_text}</span>')
+                            current_pos += len(word['text']) + 1  # +1 for space
+                    
+                    # Create and add paragraph with formatted text
+                    para_text = ' '.join(formatted_text)
                     para_obj = Paragraph(para_text, style)
                     story.append(para_obj)
                     story.append(Spacer(1, style.spaceAfter))
