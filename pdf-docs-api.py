@@ -803,56 +803,73 @@ def save_text_to_pdf(original_text, proofread_text, selected_suggestions, pdf_pa
             # Create a mapping from original character index to corrected character index
             original_to_corrected_map = {}
             corrected_index = 0
-            original_index = 0
             
+            # Build the map based on opcodes
+            original_index = 0
             for tag, i1, i2, j1, j2 in opcodes:
-                # Handle characters before the current opcode
+                # Map characters in the original that are before the current opcode's range
                 while original_index < i1:
                     original_to_corrected_map[original_index] = corrected_index
                     original_index += 1
                     corrected_index += 1
                     
+                # Handle the opcode range
                 if tag == 'replace':
-                    for i in range(i1, i2):
-                         # Map original characters to the start of the replacement in corrected text
-                        original_to_corrected_map[i] = corrected_index + (i - i1)
+                    # For replacements, map each original character in the replaced range
+                    # to the corresponding character in the corrected text replacement
+                    for i_orig in range(i1, i2):
+                        # Ensure we don't go out of bounds in the corrected text replacement
+                        if (i_orig - i1) < (j2 - j1):
+                            original_to_corrected_map[i_orig] = corrected_index + (i_orig - i1)
+                        else:
+                            # This case should ideally not happen with a correct diff, but as a fallback
+                            original_to_corrected_map[i_orig] = corrected_index + (j2 - j1) - 1 if (j2 - j1) > 0 else None
+                            
                     corrected_index += (j2 - j1)
                     original_index = i2
                     
                 elif tag == 'insert':
-                    # Inserted characters don't map to original characters
+                    # Inserted characters don't correspond to original characters in this range
                     corrected_index += (j2 - j1)
-                    # original_index remains the same
+                    original_index = i1 # Stay at the start of the insertion range in original
                     
                 elif tag == 'delete':
-                    for i in range(i1, i2):
-                        original_to_corrected_map[i] = None # Indicate deletion
+                    # Map deleted characters to None
+                    for i_orig in range(i1, i2):
+                        original_to_corrected_map[i_orig] = None
                     original_index = i2
                     # corrected_index remains the same
             
-            # Handle remaining characters after the last opcode
+            # Handle any remaining original characters after the last opcode
             while original_index < len(original_chars):
-                 original_to_corrected_map[original_index] = corrected_index
-                 original_index += 1
-                 corrected_index += 1
+                original_to_corrected_map[original_index] = corrected_index
+                original_index += 1
+                corrected_index += 1
 
+            # Now reconstruct the corrected lines based on the original line structure and the mapping
             corrected_line_texts = []
-            current_original_char_flat_index = 0
+            current_original_flat_index = 0
             for line in formatted_lines:
                 original_line_text = line['text']
                 original_line_length = len(original_line_text)
                 
                 corrected_line_chars = []
+                # Iterate through the original character indices for this line
                 for i in range(original_line_length):
-                    original_char_flat_index = current_original_char_flat_index + i
+                    original_char_flat_index = current_original_flat_index + i
+                    
+                    # Look up the corresponding index in the corrected text
                     if original_char_flat_index in original_to_corrected_map:
-                        corrected_char_index = original_to_corrected_map[original_char_flat_index]
-                        if corrected_char_index is not None and corrected_char_index < len(final_corrected_chars):
-                            corrected_line_chars.append(final_corrected_chars[corrected_char_index])
-                        # else: character was deleted or insertion point, skip
+                        corrected_char_flat_index = original_to_corrected_map[original_char_flat_index]
+                        
+                        # If there is a corresponding character and it's within bounds
+                        if corrected_char_flat_index is not None and corrected_char_flat_index < len(final_corrected_chars):
+                            corrected_line_chars.append(final_corrected_chars[corrected_char_flat_index])
+                         # else: character was deleted or this original index corresponds to an insertion point,
+                         # don't add a character from corrected text for this original position.
 
                 corrected_line_texts.append(''.join(corrected_line_chars))
-                current_original_char_flat_index += original_line_length
+                current_original_flat_index += original_line_length
             
             # Group lines by page number (using the updated corrected_line_texts)
             lines_by_page = defaultdict(list)
