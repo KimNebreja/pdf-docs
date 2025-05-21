@@ -880,29 +880,32 @@ def save_text_to_pdf(original_text, proofread_text, selected_suggestions, pdf_pa
                     line_text_corrected = line['corrected_text']
                     words_in_line = line['words']
                     
+                    # Skip drawing if the corrected text is empty or no original words were detected for position/formatting
+                    if not line_text_corrected.strip() or not words_in_line:
+                        continue
+
                     # Calculate horizontal offset for the line based on the first word's x0
-                    x_offset = words_in_line[0]['x0'] if words_in_line else 0 # Default offset
+                    x_offset = words_in_line[0]['x0'] # No need for else 0 here due to the check above
 
                     # Use the first word of the original line for formatting information
-                    if words_in_line:
-                        first_word = words_in_line[0]
-                        font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
-                        font_size = float(first_word.get('size', 11))
-                        mupdf_page = doc[page_num] # Use the correct mupdf page object
-                        
-                        # Use the bounding box of the first word for color detection
-                        bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
-                        color = get_text_color(mupdf_page, bbox)
-                        r, g, b = normalize_color(color) if color else (0, 0, 0)
-                        
-                        c.setFont(font_name, font_size)
-                        c.setFillColorRGB(r, g, b)
-                        
-                        # Adjust y-coordinate to be relative to the bottom of the page
-                        # pdfplumber y is from top, reportlab y is from bottom
-                        y_pos_bottom = page_height - line['y_pos'] - (words_in_line[0]['bottom'] - words_in_line[0]['top'])
+                    first_word = words_in_line[0]
+                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                    font_size = float(first_word.get('size', 11))
+                    mupdf_page = doc[page_num] # Use the correct mupdf page object
+                    
+                    # Use the bounding box of the first word for color detection
+                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                    color = get_text_color(mupdf_page, bbox)
+                    r, g, b = normalize_color(color) if color else (0, 0, 0)
+                    
+                    c.setFont(font_name, font_size)
+                    c.setFillColorRGB(r, g, b)
+                    
+                    # Adjust y-coordinate to be relative to the bottom of the page
+                    # pdfplumber y is from top, reportlab y is from bottom
+                    y_pos_bottom = page_height - line['y_pos'] - (words_in_line[0]['bottom'] - words_in_line[0]['top'])
 
-                        c.drawString(x_offset, y_pos_bottom, line_text_corrected)
+                    c.drawString(x_offset, y_pos_bottom, line_text_corrected)
 
                 # TODO: Add logic here to draw tables, headers, footers, etc. based on their detected positions
 
