@@ -935,12 +935,14 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 # TODO: Add logic here to draw tables, headers, footers, etc. based on their detected positions
 
             # Add page numbers
-            for page_num in page_numbers:
-                 # Switch to the correct page before drawing page number
-                c.setPageNumber(page_num + 1) # ReportLab page numbers are 1-based
-                c.setFillColorRGB(0, 0, 0) # Black color for page numbers
-                c.setFont('Helvetica', 9)
-                c.drawCentredString(page_width/2, 30, str(page_num + 1))
+            c.setFillColorRGB(0, 0, 0) # Black color for page numbers
+            c.setFont('Helvetica', 9)
+            # Draw page number at the bottom center of the page
+            c.drawCentredString(page_width/2, 30, str(page_num + 1))
+
+            # Add a page break after each page's content except the last
+            if page_idx < len(page_numbers) - 1:
+                c.showPage()
 
             c.save()
 
