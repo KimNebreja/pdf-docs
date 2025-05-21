@@ -981,15 +981,23 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     # Use the enhanced spacing information
                     spacing = para.get('spacing', {})
                     # Ensure minimum spacing is based on detected font size
-                    space_before = max(spacing.get('before', 0), font_size * 0.8) # Adjusted threshold
-                    space_after = max(spacing.get('after', 0), font_size * 0.8)  # Adjusted threshold
+                    # Prioritize using the detected 'before' spacing, fall back to font size * multiplier
+                    space_before = spacing.get('before', font_size * 0.8) # Use detected, fallback to font size factor
+                    # Ensure a minimum space before if it's the start of a paragraph, unless it's the very first paragraph
+                    if para_idx > 0 or page_idx > 0:
+                         space_before = max(space_before, font_size * 0.2) # Ensure a small minimum gap
+
+                    # Prioritize using the detected 'after' spacing, fall back to font size * multiplier
+                    space_after = spacing.get('after', font_size * 0.8) # Use detected, fallback to font size factor
+                    # Ensure a minimum space after if it's not the last paragraph
+                    if para_idx < len(paragraphs) - 1 or page_idx < len(page_numbers) - 1:
+                         space_after = max(space_after, font_size * 0.2) # Ensure a small minimum gap
 
                     # Calculate line spacing within the paragraph
                     # Use the average line spacing detected, but ensure it's at least the font size plus a small buffer
-                    avg_line_spacing = max(
-                        spacing.get('avg_line_spacing', font_size * 1.2), # Ensure minimum line spacing
-                        font_size * 1.1 # Fallback minimum leading
-                    )
+                    # Prioritize using the detected avg_line_spacing, fall back to font size multiplier
+                    avg_line_spacing = spacing.get('avg_line_spacing', font_size * 1.2) # Use detected, fallback to font size factor
+                    leading = max(avg_line_spacing, font_size * 1.1) # Ensure minimum leading is slightly more than font size
 
                     # Create paragraph style with precise spacing
                     # Apply firstLineIndent only if it's significantly different from the overall left indent
@@ -998,7 +1006,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             name='JustifiedWithFirstLineIndent',
                             fontName=font_name,
                             fontSize=font_size,
-                            leading=avg_line_spacing + 0.5, # Use calculated avg_line_spacing for leading
+                            leading=leading, # Use the calculated leading
                             textColor=Color(r, g, b),
                             alignment=TA_JUSTIFY,
                             spaceAfter=space_after,
@@ -1014,7 +1022,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                             name='JustifiedWithBlockIndent',
                             fontName=font_name,
                             fontSize=font_size,
-                            leading=avg_line_spacing + 0.5, # Use calculated avg_line_spacing for leading
+                            leading=leading, # Use the calculated leading
                             textColor=Color(r, g, b),
                             alignment=TA_JUSTIFY,
                             spaceAfter=space_after,
