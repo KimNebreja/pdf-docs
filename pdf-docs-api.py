@@ -857,13 +857,12 @@ def save_text_to_pdf(original_text, proofread_text, selected_suggestions, pdf_pa
             # Group lines by page number (using the updated corrected_line_texts)
             lines_by_page = defaultdict(list)
             current_line_index = 0
-            for page_num in sorted(lines_by_page.keys()): # Iterate through pages based on original structure
-                 for line in formatted_lines:
-                      if line.get('page', 0) == page_num:
-                            line_obj = dict(line)
-                            line_obj['corrected_text'] = corrected_line_texts[current_line_index]
-                            lines_by_page[page_num].append(line_obj)
-                            current_line_index += 1
+            for line in formatted_lines:
+                 page_num = line.get('page', 0)
+                 line_obj = dict(line)
+                 line_obj['corrected_text'] = corrected_line_texts[current_line_index]
+                 lines_by_page[page_num].append(line_obj)
+                 current_line_index += 1
 
             page_numbers = sorted(lines_by_page.keys())
 
