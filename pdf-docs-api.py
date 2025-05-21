@@ -764,7 +764,7 @@ def extract_text_with_formatting(pdf_path):
         logger.error(f"Error extracting text with formatting: {str(e)}")
         raise
 
-def save_text_to_pdf(text, pdf_path, original_pdf_path):
+def save_text_to_pdf(original_text, proofread_text, selected_suggestions, pdf_path, original_pdf_path):
     """
     Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
     """
@@ -780,39 +780,31 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             doc = fitz.open(original_pdf_path)
             formatted_lines = extract_text_with_formatting(original_pdf_path)
             
-            # Split text while preserving whitespace
-            if isinstance(text, str):
-                proofread_chars = list(text)
+            # Apply selected suggestions to the proofread text
+            final_corrected_text = proofread_text
+            for original_word, selected_word in selected_suggestions.items():
+                # Use a regex to replace only whole words to avoid unintended replacements
+                final_corrected_text = re.sub(r'\b' + re.escape(original_word) + r'\b', re.escape(selected_word), final_corrected_text)
+
+            # Split original text while preserving whitespace
+            if isinstance(original_text, str):
+                original_chars = list(original_text)
             else:
-                proofread_chars = list(' '.join(text))
+                original_chars = list(' '.join(original_text))
             
-            original_chars = []
-            char_indices = []
-            idx = 0
-            for line in formatted_lines:
-                chars = list(line['text'])
-                start = idx
-                idx += len(chars)
-                end = idx
-                char_indices.append((start, end))
-                original_chars.extend(chars)
+            # Use the final corrected text for comparison
+            final_corrected_chars = list(final_corrected_text)
             
-            # Use difflib to match original and proofread text at character level
-            sm = difflib.SequenceMatcher(None, original_chars, proofread_chars)
-            corrected_chars = list(original_chars)
+            # Use difflib to match original and final corrected text at character level
+            sm = difflib.SequenceMatcher(None, original_chars, final_corrected_chars)
             opcodes = sm.get_opcodes()
             
-            # Apply corrections at character level
-            # Create a mapping from original character index to corrected character index
+            # Apply corrections at character level and create a mapping
             original_to_corrected_map = {}
             corrected_index = 0
-            
-            opcode_index = 0
             original_index = 0
             
-            while opcode_index < len(opcodes):
-                tag, i1, i2, j1, j2 = opcodes[opcode_index]
-                
+            for tag, i1, i2, j1, j2 in opcodes:
                 # Handle characters before the current opcode
                 while original_index < i1:
                     original_to_corrected_map[original_index] = corrected_index
@@ -820,27 +812,23 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     corrected_index += 1
                     
                 if tag == 'replace':
-                    # Map replaced characters
                     for i in range(i1, i2):
-                         # This mapping is approximate for replacements, just points to the start of the replacement in corrected text
+                         # Map original characters to the start of the replacement in corrected text
                         original_to_corrected_map[i] = corrected_index + (i - i1)
                     corrected_index += (j2 - j1)
                     original_index = i2
                     
                 elif tag == 'insert':
-                    # No mapping for original characters in the inserted range
+                    # Inserted characters don't map to original characters
                     corrected_index += (j2 - j1)
                     # original_index remains the same
                     
                 elif tag == 'delete':
-                    # Map deleted characters to None or a special value
                     for i in range(i1, i2):
                         original_to_corrected_map[i] = None # Indicate deletion
                     original_index = i2
                     # corrected_index remains the same
-                
-                opcode_index += 1
-                
+            
             # Handle remaining characters after the last opcode
             while original_index < len(original_chars):
                  original_to_corrected_map[original_index] = corrected_index
@@ -851,9 +839,9 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             for line in formatted_lines:
                 original_line_text = line['text']
                 original_line_chars = list(original_line_text)
-                original_line_start_index = -1 # Need to find the actual starting index in original_chars
-
-                 # Find the starting index of this line in the flattened original_chars list
+                
+                # Find the starting index of this line in the flattened original_chars list
+                original_line_start_index = -1
                 current_flat_index = 0
                 found_start = False
                 for i, l in enumerate(formatted_lines):
@@ -872,10 +860,9 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     original_char_flat_index = original_line_start_index + i
                     if original_char_flat_index in original_to_corrected_map:
                         corrected_char_index = original_to_corrected_map[original_char_flat_index]
-                        if corrected_char_index is not None and corrected_char_index < len(proofread_chars):
-                            corrected_line_chars.append(proofread_chars[corrected_char_index])
+                        if corrected_char_index is not None and corrected_char_index < len(final_corrected_chars):
+                            corrected_line_chars.append(final_corrected_chars[corrected_char_index])
                         # else: character was deleted or insertion point, skip
-                    # else: original character not in map (shouldn't happen if map is built correctly)
 
                 corrected_line_texts.append(''.join(corrected_line_chars))
             
@@ -906,10 +893,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         x_offset = words_in_line[0]['x0']
                     else:
                         x_offset = 0 # Default offset
-
-                    # Draw text word by word to preserve internal spacing and formatting
-                    current_x = x_offset
-                    current_word_index = 0
 
                     # Simple approach: just draw the entire corrected line at the original line's start position
                     if words_in_line:
@@ -967,8 +950,9 @@ def convert_and_proofread():
 
         # Handle text and suggestions if provided directly
         if 'text' in request.form:
-            proofread_text_content = request.form['text']
+            proofread_text_content = request.form['text'] # This is likely the LanguageTool corrected text
             original_filename = request.form.get('filename', 'document.pdf')
+            original_text_content = request.form.get('original_text', '') # Assuming original_text is also sent
             
             # Store the original file path in a session-like dictionary
             original_pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
@@ -987,9 +971,7 @@ def convert_and_proofread():
             if 'selected_suggestions' in request.form:
                 try:
                     selected_suggestions = dict(json.loads(request.form['selected_suggestions']))
-                    # Apply selected suggestions
-                    for original_word, selected_word in selected_suggestions.items():
-                        proofread_text_content = proofread_text_content.replace(original_word, selected_word)
+                    # The suggestions will be applied in save_text_to_pdf
                 except Exception as e:
                     logger.warning(f"Failed to parse selected suggestions: {str(e)}")
 
@@ -998,7 +980,8 @@ def convert_and_proofread():
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
             
             # Use the original PDF as a template for formatting
-            save_text_to_pdf(proofread_text_content, output_path, original_pdf_path)
+            # Pass original_text_content, proofread_text_content (LT corrected), and selected_suggestions
+            save_text_to_pdf(original_text_content, proofread_text_content, selected_suggestions, output_path, original_pdf_path)
             
             return jsonify({
                 "download_url": "/download/" + output_filename
@@ -1032,7 +1015,7 @@ def convert_and_proofread():
         os.makedirs(OUTPUT_FOLDER, exist_ok=True)
         
         # Save the proofread PDF using the original as template
-        save_text_to_pdf(proofread_text_content, proofread_pdf_path, pdf_path)
+        save_text_to_pdf(extracted_text, proofread_text_content, {}, proofread_pdf_path, pdf_path)
 
         return jsonify({
             "original_text": extracted_text,
