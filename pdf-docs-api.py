@@ -764,188 +764,184 @@ def extract_text_with_formatting(pdf_path):
         logger.error(f"Error extracting text with formatting: {str(e)}")
         raise
 
-def save_text_to_pdf(original_text, proofread_text, selected_suggestions, pdf_path, original_pdf_path):
+def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
     """
     try:
         register_fonts()
-        
-        packet = io.BytesIO()
-        # Create a new PDF canvas
-        c = canvas.Canvas(packet, pagesize=letter)
+        # Use standard letter size for output
+        # Keep margins for the overall document structure
+        doc_template = SimpleDocTemplate(
+            pdf_path,
+            pagesize=letter,
+            leftMargin=72, rightMargin=72, topMargin=72, bottomMargin=72
+        )
         page_width, page_height = letter
-        
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
             formatted_lines = extract_text_with_formatting(original_pdf_path)
-            
-            # Apply selected suggestions to the proofread text
-            final_corrected_text = proofread_text
-            for original_word, selected_word in selected_suggestions.items():
-                # Use a regex to replace only whole words to avoid unintended replacements
-                # Do not escape the selected_word
-                final_corrected_text = re.sub(r'\b' + re.escape(original_word) + r'\b', selected_word, final_corrected_text)
-
-            # Split original text while preserving whitespace
-            if isinstance(original_text, str):
-                original_chars = list(original_text)
+            if isinstance(text, str):
+                proofread_words = text.split()
             else:
-                original_chars = list(' '.join(original_text))
-            
-            # Use the final corrected text for comparison
-            final_corrected_chars = list(final_corrected_text)
-            
-            # Use difflib to match original and final corrected text at character level
-            sm = difflib.SequenceMatcher(None, original_chars, final_corrected_chars)
+                proofread_words = ' '.join(text).split()
+            original_words = []
+            line_word_indices = []
+            idx = 0
+            for line in formatted_lines:
+                words = line['text'].split()
+                start = idx
+                idx += len(words)
+                end = idx
+                line_word_indices.append((start, end))
+                original_words.extend(words)
+            sm = difflib.SequenceMatcher(None, original_words, proofread_words)
+            corrected_words = list(original_words)
             opcodes = sm.get_opcodes()
-            
-            # Create a mapping from original character index to corrected character index
-            original_to_corrected_map = {}
-            corrected_index = 0
-            
-            # Build the map based on opcodes
-            original_index = 0
             for tag, i1, i2, j1, j2 in opcodes:
-                # Map characters in the original that are before the current opcode's range
-                while original_index < i1:
-                    original_to_corrected_map[original_index] = corrected_index
-                    original_index += 1
-                    corrected_index += 1
-                    
-                # Handle the opcode range
-                if tag == 'replace':
-                    # For replacements, map each original character in the replaced range
-                    # to the corresponding character in the corrected text replacement
-                    for i_orig in range(i1, i2):
-                        # Ensure we don't go out of bounds in the corrected text replacement
-                        if (i_orig - i1) < (j2 - j1):
-                            original_to_corrected_map[i_orig] = corrected_index + (i_orig - i1)
-                        else:
-                            # This case should ideally not happen with a correct diff, but as a fallback
-                            original_to_corrected_map[i_orig] = corrected_index + (j2 - j1) - 1 if (j2 - j1) > 0 else None
-                            
-                    corrected_index += (j2 - j1)
-                    original_index = i2
-                    
-                elif tag == 'insert':
-                    # Inserted characters don't correspond to original characters in this range
-                    corrected_index += (j2 - j1)
-                    original_index = i1 # Stay at the start of the insertion range in original
-                    
+                if tag in ('replace', 'insert'):
+                    corrected_words[i1:i2] = proofread_words[j1:j2]
                 elif tag == 'delete':
-                    # Map deleted characters to None
-                    for i_orig in range(i1, i2):
-                        original_to_corrected_map[i_orig] = None
-                    original_index = i2
-                    # corrected_index remains the same
-            
-            # Handle any remaining original characters after the last opcode
-            while original_index < len(original_chars):
-                original_to_corrected_map[original_index] = corrected_index
-                original_index += 1
-                corrected_index += 1
-
-            # Now reconstruct the corrected lines based on the original line structure and the mapping
-            corrected_line_texts = []
-            current_original_flat_index = 0
-            for line in formatted_lines:
-                original_line_text = line['text']
-                original_line_length = len(original_line_text)
-                
-                corrected_line_chars = []
-                # Iterate through the original character indices for this line
-                for i in range(original_line_length):
-                    original_char_flat_index = current_original_flat_index + i
-                    
-                    # Look up the corresponding index in the corrected text
-                    if original_char_flat_index in original_to_corrected_map:
-                        corrected_char_flat_index = original_to_corrected_map[original_char_flat_index]
-                        
-                        # If there is a corresponding character and it's within bounds
-                        if corrected_char_flat_index is not None and corrected_char_flat_index < len(final_corrected_chars):
-                            corrected_line_chars.append(final_corrected_chars[corrected_char_flat_index])
-                         # else: character was deleted or this original index corresponds to an insertion point,
-                         # don't add a character from corrected text for this original position.
-
-                corrected_line_texts.append(''.join(corrected_line_chars))
-                current_original_flat_index += original_line_length
-            
-            # Group lines by page number (using the updated corrected_line_texts)
+                    corrected_words[i1:i2] = []
+            corrected_lines = []
+            for start, end in line_word_indices:
+                corrected_lines.append(' '.join(corrected_words[start:end]))
+            # Group lines by page number
             lines_by_page = defaultdict(list)
-            current_line_index = 0
-            for line in formatted_lines:
-                 page_num = line.get('page', 0)
-                 line_obj = dict(line)
-                 line_obj['corrected_text'] = corrected_line_texts[current_line_index]
-                 lines_by_page[page_num].append(line_obj)
-                 current_line_index += 1
+            for i, line in enumerate(formatted_lines):
+                line = dict(line)
+                line['line_index'] = i
+                lines_by_page[line.get('page', 0)].append(line)
 
-            # Now iterate through the pages to draw them
+            story = []
             page_numbers = sorted(lines_by_page.keys())
 
             for page_idx, page_num in enumerate(page_numbers):
-                if page_idx > 0:
-                    c.showPage()
-
                 page_lines = lines_by_page[page_num]
                 if not page_lines:
                     continue
 
-                # Draw lines and words with original formatting and position
-                for line in page_lines:
-                    line_text_corrected = line['corrected_text']
-                    words_in_line = line['words']
-                    
-                    # Skip drawing if the corrected text is empty or no original words were detected for position/formatting
-                    if not line_text_corrected.strip() or not words_in_line:
+                # Detect paragraphs for this page
+                paragraphs = detect_paragraphs(page_lines)
+                for para_idx, para in enumerate(paragraphs):
+                    para_lines = para['lines']
+                    para_indices = [l['line_index'] for l in para_lines]
+                    para_text = ' '.join([corrected_lines[i] for i in para_indices])
+                    if not para_lines:
                         continue
 
-                    # Calculate horizontal offset for the line based on the first word's x0
-                    x_offset = words_in_line[0]['x0'] # No need for else 0 here due to the check above
+                    # Calculate the minimum x0 for this paragraph
+                    min_x0 = float('inf')
+                    max_x1 = float('-inf')
+                    min_y0 = float('inf')
+                    max_y1 = float('-inf')
 
-                    # Use the first word of the original line for formatting information
-                    first_word = words_in_line[0]
+                    for line in para_lines:
+                        if line['words']:  # Ensure line is not empty
+                            min_x0 = min(min_x0, line['words'][0]['x0'])
+                            max_x1 = max(max_x1, line['words'][-1]['x0'] + line['words'][-1]['width'])
+                            min_y0 = min(min_y0, line['words'][0]['top'])
+                            max_y1 = max(max_y1, line['words'][-1]['bottom'])
+
+                    if min_x0 == float('inf') or max_x1 == float('-inf'):
+                        continue  # Skip if no words found in paragraph lines
+
+                    first_word = para_lines[0]['words'][0]
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
-                    mupdf_page = doc[page_num] # Use the correct mupdf page object
+                    mupdf_page = doc[para_lines[0]['page']]
                     
-                    # Use the bounding box of the first word for color detection
+                    # Use the bounding box of the first line for color detection
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
+
+                    # Calculate left indent based on the paragraph's minimum x0 relative to the margin
+                    left_indent = max(0, min_x0 - doc_template.leftMargin)
+
+                    # Calculate right indent from the right edge of the text block to the right margin
+                    right_indent = max(0, page_width - doc_template.rightMargin - max_x1)
+
+                    # Calculate first line indent if it differs from the paragraph's overall left indent
+                    first_line_x0 = para_lines[0]['words'][0]['x0'] if para_lines[0]['words'] else min_x0
+                    first_line_indent = max(0, first_line_x0 - min_x0)  # Indent relative to paragraph's left edge
+
+                    # Calculate paragraph spacing
+                    space_before = 0
+                    space_after = 0
                     
-                    c.setFont(font_name, font_size)
-                    c.setFillColorRGB(r, g, b)
+                    # Calculate space before paragraph
+                    if para_idx > 0:
+                        prev_para = paragraphs[para_idx - 1]
+                        if prev_para['lines']:
+                            last_line = prev_para['lines'][-1]
+                            if last_line['words']:
+                                space_before = max(0, min_y0 - last_line['words'][-1]['bottom'])
                     
-                    # Adjust y-coordinate to be relative to the bottom of the page
-                    # pdfplumber y is from top, reportlab y is from bottom
-                    y_pos_bottom = page_height - line['y_pos'] - (words_in_line[0]['bottom'] - words_in_line[0]['top'])
+                    # Calculate space after paragraph
+                    if para_idx < len(paragraphs) - 1:
+                        next_para = paragraphs[para_idx + 1]
+                        if next_para['lines']:
+                            first_line = next_para['lines'][0]
+                            if first_line['words']:
+                                space_after = max(0, first_line['words'][0]['top'] - max_y1)
 
-                    c.drawString(x_offset, y_pos_bottom, line_text_corrected)
+                    # Calculate line height based on the average height of lines in the paragraph
+                    line_heights = []
+                    for line in para_lines:
+                        if line['words']:
+                            line_height = line['words'][-1]['bottom'] - line['words'][0]['top']
+                            line_heights.append(line_height)
+                    
+                    avg_line_height = sum(line_heights) / len(line_heights) if line_heights else font_size * 1.2
 
-                # TODO: Add logic here to draw tables, headers, footers, etc. based on their detected positions
+                    # Adjust first line indent if it's significantly different
+                    if first_line_indent > font_size * 0.5:  # If first line is indented by more than half a font size
+                        calculated_first_line_indent = max(0, first_line_x0 - doc_template.leftMargin - left_indent)
+                        style = ParagraphStyle(
+                            name='JustifiedWithFirstLineIndent',
+                            fontName=font_name,
+                            fontSize=font_size,
+                            leading=avg_line_height,  # Use calculated average line height
+                            textColor=Color(r, g, b),
+                            alignment=TA_JUSTIFY,
+                            spaceAfter=space_after,
+                            spaceBefore=space_before,
+                            leftIndent=left_indent,
+                            rightIndent=right_indent,
+                            firstLineIndent=calculated_first_line_indent,
+                        )
+                    else:
+                        style = ParagraphStyle(
+                            name='JustifiedWithBlockIndent',
+                            fontName=font_name,
+                            fontSize=font_size,
+                            leading=avg_line_height,  # Use calculated average line height
+                            textColor=Color(r, g, b),
+                            alignment=TA_JUSTIFY,
+                            spaceAfter=space_after,
+                            spaceBefore=space_before,
+                            leftIndent=left_indent,
+                            rightIndent=right_indent,
+                            firstLineIndent=0,
+                        )
 
-            # Add page numbers
-            c.setFillColorRGB(0, 0, 0) # Black color for page numbers
-            c.setFont('Helvetica', 9)
-            # Draw page number at the bottom center of the page
-            c.drawCentredString(page_width/2, 30, str(page_num + 1))
+                    para_obj = Paragraph(para_text, style)
+                    story.append(para_obj)
 
-            # Add a page break after each page's content except the last
-            if page_idx < len(page_numbers) - 1:
-                c.showPage()
+                # Add a page break after each page's content except the last
+                if page_idx < len(page_numbers) - 1:
+                    story.append(PageBreak())
 
-            c.save()
+            # Add page numbers using onPage callback
+            def add_page_number(canvas, doc):
+                canvas.drawCentredString(page_width/2, 30, str(doc.page))
 
-        # Move to the beginning of the StringIO buffer
-        packet.seek(0)
+            # Build the document with the story and page number callback
+            doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
 
-        # Save the new PDF
-        with open(pdf_path, 'wb') as f:
-            f.write(packet.read())
-            
-        logger.info("PDF saved successfully with original formatting and position")
+            doc.close()
+            logger.info("PDF saved successfully with original formatting")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
@@ -959,9 +955,8 @@ def convert_and_proofread():
 
         # Handle text and suggestions if provided directly
         if 'text' in request.form:
-            proofread_text_content = request.form['text'] # This is likely the LanguageTool corrected text
+            proofread_text_content = request.form['text']
             original_filename = request.form.get('filename', 'document.pdf')
-            original_text_content = request.form.get('original_text', '') # Assuming original_text is also sent
             
             # Store the original file path in a session-like dictionary
             original_pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
@@ -980,7 +975,9 @@ def convert_and_proofread():
             if 'selected_suggestions' in request.form:
                 try:
                     selected_suggestions = dict(json.loads(request.form['selected_suggestions']))
-                    # The suggestions will be applied in save_text_to_pdf
+                    # Apply selected suggestions
+                    for original_word, selected_word in selected_suggestions.items():
+                        proofread_text_content = proofread_text_content.replace(original_word, selected_word)
                 except Exception as e:
                     logger.warning(f"Failed to parse selected suggestions: {str(e)}")
 
@@ -989,8 +986,7 @@ def convert_and_proofread():
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
             
             # Use the original PDF as a template for formatting
-            # Pass original_text_content, proofread_text_content (LT corrected), and selected_suggestions
-            save_text_to_pdf(original_text_content, proofread_text_content, selected_suggestions, output_path, original_pdf_path)
+            save_text_to_pdf(proofread_text_content, output_path, original_pdf_path)
             
             return jsonify({
                 "download_url": "/download/" + output_filename
@@ -1024,7 +1020,7 @@ def convert_and_proofread():
         os.makedirs(OUTPUT_FOLDER, exist_ok=True)
         
         # Save the proofread PDF using the original as template
-        save_text_to_pdf(extracted_text, proofread_text_content, {}, proofread_pdf_path, pdf_path)
+        save_text_to_pdf(proofread_text_content, proofread_pdf_path, pdf_path)
 
         return jsonify({
             "original_text": extracted_text,
