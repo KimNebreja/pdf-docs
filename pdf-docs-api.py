@@ -693,7 +693,7 @@ def extract_text_with_formatting(pdf_path):
                     # Sort words in line by x-position (left to right)
                     line_words.sort(key=lambda x: x['x0'])
                     
-                    # Create a line object with formatting
+                    # Create a line object with formatting, including default values for missing attributes
                     line_obj = {
                         'text': ' '.join([w['text'] for w in line_words]),
                         'words': line_words,
@@ -904,7 +904,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                                                                            word['x0'] + word['width'], word['bottom']))
                             r, g, b = normalize_color(word_color) if word_color else (0, 0, 0)
                             
-                            # Check for bold, italic, and underline
+                            # Check for bold, italic, and underline, providing default values
                             is_bold = 'bold' in word_font.lower() or word.get('fontweight', 0) > 500
                             is_italic = 'italic' in word_font.lower() or word.get('fontstyle', '').lower() == 'italic'
                             is_underline = word.get('underline', False)
