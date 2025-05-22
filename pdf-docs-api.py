@@ -662,7 +662,8 @@ def extract_text_with_formatting(pdf_path):
         # Open PDF with PyMuPDF to get image information
         doc = fitz.open(pdf_path)
         
-        for page_num, page in enumerate(doc.pages):
+        for page_num in range(len(doc)):
+            page = doc[page_num]
             # Get images on this page
             image_list = page.get_images(full=True)
             for img in image_list:
@@ -698,6 +699,58 @@ def extract_text_with_formatting(pdf_path):
         logger.error(f"Error extracting text with formatting: {str(e)}")
         raise
 
+def apply_proofread_text(original_text, proofread_text, selected_suggestions=None):
+    """
+    Applies proofread text and suggestions to the original text while maintaining formatting.
+    Returns a dictionary mapping original text positions to their proofread versions.
+    """
+    try:
+        # Initialize the mapping
+        text_mapping = {}
+        
+        # First apply any selected suggestions
+        if selected_suggestions:
+            for original_word, selected_word in selected_suggestions.items():
+                # Find all occurrences of the original word
+                start = 0
+                while True:
+                    start = original_text.find(original_word, start)
+                    if start == -1:
+                        break
+                    text_mapping[start] = {
+                        'original': original_word,
+                        'proofread': selected_word,
+                        'length': len(original_word)
+                    }
+                    start += len(original_word)
+        
+        # Use difflib to find differences between original and proofread text
+        matcher = difflib.SequenceMatcher(None, original_text, proofread_text)
+        
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == 'equal':
+                # Text is the same, no changes needed
+                continue
+            elif tag in ('replace', 'insert'):
+                # Store the mapping for changed text
+                text_mapping[i1] = {
+                    'original': original_text[i1:i2],
+                    'proofread': proofread_text[j1:j2],
+                    'length': i2 - i1
+                }
+            elif tag == 'delete':
+                # Mark deleted text
+                text_mapping[i1] = {
+                    'original': original_text[i1:i2],
+                    'proofread': '',
+                    'length': i2 - i1
+                }
+        
+        return text_mapping
+    except Exception as e:
+        logger.error(f"Error applying proofread text: {str(e)}")
+        raise
+
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     Saves proofread text to a new PDF file while preserving the exact formatting, images, and structure of the original PDF.
@@ -706,6 +759,17 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
         # Open the original PDF to get its structure
         original_doc = fitz.open(original_pdf_path)
         new_doc = fitz.open()
+        
+        # Extract the original text for comparison
+        original_text = ""
+        text_blocks = []
+        for page in original_doc:
+            blocks = page.get_text("dict")["blocks"]
+            text_blocks.extend(blocks)
+            original_text += page.get_text()
+        
+        # Apply proofreading changes
+        text_mapping = apply_proofread_text(original_text, text)
         
         # Process each page
         for page_num in range(len(original_doc)):
@@ -728,33 +792,44 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 new_page.insert_image(image_rect, stream=image_bytes)
             
             # Get the text blocks from the original page
-            text_blocks = original_page.get_text("dict")["blocks"]
+            page_blocks = original_page.get_text("dict")["blocks"]
             
             # Process each text block
-            for block in text_blocks:
+            for block in page_blocks:
                 if "lines" in block:
                     for line in block["lines"]:
                         if "spans" in line:
                             for span in line["spans"]:
                                 # Get the original text and its position
-                                original_text = span["text"]
+                                original_span_text = span["text"]
                                 bbox = fitz.Rect(span["bbox"])
                                 
-                                # Find the corresponding proofread text
-                                # This is a simplified version - you might need more sophisticated text matching
-                                if original_text.strip():
-                                    # Get the proofread version of this text
-                                    proofread_text = text  # You'll need to implement proper text matching here
-                                    
-                                    # Insert the proofread text with the same formatting
-                                    new_page.insert_text(
-                                        bbox.tl,  # Top-left point of the original text
-                                        proofread_text,
-                                        fontname=span.get("font", "Helvetica"),
-                                        fontsize=span.get("size", 11),
-                                        color=span.get("color", 0),
-                                        render_mode=span.get("render_mode", 0)
-                                    )
+                                if original_span_text.strip():
+                                    # Find the corresponding proofread text
+                                    span_start = original_text.find(original_span_text)
+                                    if span_start != -1:
+                                        # Get the proofread version from our mapping
+                                        proofread_span = original_span_text
+                                        for pos, mapping in sorted(text_mapping.items()):
+                                            if span_start <= pos < span_start + len(original_span_text):
+                                                # Calculate the relative position within this span
+                                                rel_pos = pos - span_start
+                                                # Replace the text at this position
+                                                proofread_span = (
+                                                    proofread_span[:rel_pos] +
+                                                    mapping['proofread'] +
+                                                    proofread_span[rel_pos + mapping['length']:]
+                                                )
+                                        
+                                        # Insert the proofread text with the same formatting
+                                        new_page.insert_text(
+                                            bbox.tl,  # Top-left point of the original text
+                                            proofread_span,
+                                            fontname=span.get("font", "Helvetica"),
+                                            fontsize=span.get("size", 11),
+                                            color=span.get("color", 0),
+                                            render_mode=span.get("render_mode", 0)
+                                        )
             
             # Copy any other elements (like annotations, links, etc.)
             for annot in original_page.annots():
@@ -803,9 +878,6 @@ def convert_and_proofread():
             if 'selected_suggestions' in request.form:
                 try:
                     selected_suggestions = dict(json.loads(request.form['selected_suggestions']))
-                    # Apply selected suggestions
-                    for original_word, selected_word in selected_suggestions.items():
-                        proofread_text_content = proofread_text_content.replace(original_word, selected_word)
                 except Exception as e:
                     logger.warning(f"Failed to parse selected suggestions: {str(e)}")
 
