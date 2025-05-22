@@ -906,23 +906,33 @@ def detect_text_alignment(page, line_words):
             # Calculate gap variance to detect justified text
             gap_variance = sum((g - avg_gap) ** 2 for g in gaps) / len(gaps) if gaps else 0
             
-            # More lenient conditions for justified text
+            # Debug logging
+            logger.debug(f"Line width: {line_width}, Available width: {available_width}")
+            logger.debug(f"Average gap: {avg_gap}, Gap variance: {gap_variance}")
+            logger.debug(f"Line start: {line_start}, Left margin: {left_margin}")
+            
+            # Very lenient conditions for justified text
             is_justified = (
-                # Check if line spans most of the available width
-                (abs(line_width - available_width) < 50 or  # Increased width tolerance
-                 line_width > available_width * 0.8) and  # Or at least 80% of available width
+                # Check if line spans a significant portion of the available width
+                (abs(line_width - available_width) < 100 or  # Much more lenient width tolerance
+                 line_width > available_width * 0.7) and  # Or at least 70% of available width
                 
-                # Check for reasonable word spacing
-                avg_gap > 2 and  # Lowered minimum gap threshold
+                # Check for any word spacing
+                avg_gap > 1 and  # Very low minimum gap threshold
                 
-                # Check for uniform spacing
-                gap_variance < 150 and  # Increased variance threshold
+                # Check for relatively uniform spacing
+                gap_variance < 200 and  # Much higher variance threshold
                 
                 # Check if text starts near left margin
-                abs(line_start - left_margin) < 30  # Increased left margin tolerance
+                abs(line_start - left_margin) < 50  # Much more lenient left margin tolerance
             )
             
+            # Additional check for multi-word lines
+            if len(line_words) > 2 and line_width > available_width * 0.6:
+                is_justified = True
+            
             if is_justified:
+                logger.debug("Detected as justified text")
                 return 'JUSTIFY'
         
         # Check for center alignment
@@ -942,8 +952,13 @@ def detect_text_alignment(page, line_words):
             
         # Check for left alignment - more strict conditions
         if (abs(line_start - left_margin) < 20 and  # Text starts near left margin
-            abs(line_width - available_width) < 50):  # Text is not full width
+            abs(line_width - available_width) < 50 and  # Text is not full width
+            len(line_words) <= 2):  # Left-aligned text is usually short
             return 'LEFT'
+            
+        # If we have multiple words and the line is wide, it's probably justified
+        if len(line_words) > 2 and line_width > available_width * 0.6:
+            return 'JUSTIFY'
             
         # Default to left alignment
         return 'LEFT'
