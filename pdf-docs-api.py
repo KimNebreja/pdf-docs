@@ -837,122 +837,9 @@ def apply_proofread_text(original_text, proofread_text, selected_suggestions=Non
         logger.error(f"Error applying proofread text: {str(e)}")
         raise
 
-def calculate_text_width(c, text, font_name, font_size, style_info):
-    """Calculate accurate text width considering font style and spacing with refined multipliers."""
-    try:
-        # Get base width
-        base_width = c.stringWidth(text, font_name, font_size)
-        
-        # Refined style multipliers based on typography best practices
-        style_multiplier = 1.0
-        
-        # Adjust for bold text - varies by font family
-        if style_info['is_bold']:
-            if 'helvetica' in font_name.lower() or 'arial' in font_name.lower():
-                style_multiplier *= 1.12  # Sans-serif fonts typically expand less
-            elif 'times' in font_name.lower() or 'georgia' in font_name.lower():
-                style_multiplier *= 1.18  # Serif fonts expand more
-            else:
-                style_multiplier *= 1.15  # Default for other fonts
-                
-        # Adjust for italic text - varies by font family
-        if style_info['is_italic']:
-            if 'helvetica' in font_name.lower() or 'arial' in font_name.lower():
-                style_multiplier *= 1.08  # Sans-serif italic needs less space
-            elif 'times' in font_name.lower() or 'georgia' in font_name.lower():
-                style_multiplier *= 1.12  # Serif italic needs more space
-            else:
-                style_multiplier *= 1.1   # Default for other fonts
-                
-        # Additional adjustments for style combinations
-        if style_info['is_bold'] and style_info['is_italic']:
-            if 'helvetica' in font_name.lower() or 'arial' in font_name.lower():
-                style_multiplier *= 1.04  # Less additional space for sans-serif
-            elif 'times' in font_name.lower() or 'georgia' in font_name.lower():
-                style_multiplier *= 1.06  # More additional space for serif
-            else:
-                style_multiplier *= 1.05  # Default for other fonts
-                
-        # Add small padding for better readability
-        style_multiplier += 0.02  # 2% padding for all text
-        
-        return base_width * style_multiplier
-    except Exception as e:
-        logger.warning(f"Error calculating text width: {str(e)}")
-        return c.stringWidth(text, font_name, font_size) * 1.02  # Fallback with minimal padding
-
-def get_baseline_offset(font_name, font_size, style_info):
-    """Calculate proper baseline offset for different font styles."""
-    try:
-        # Base offset is typically 20% of font size
-        base_offset = font_size * 0.2
-        
-        # Adjust for font family
-        if 'times' in font_name.lower() or 'georgia' in font_name.lower():
-            base_offset *= 0.95  # Serif fonts typically have lower baseline
-        elif 'helvetica' in font_name.lower() or 'arial' in font_name.lower():
-            base_offset *= 1.05  # Sans-serif fonts typically have higher baseline
-            
-        # Adjust for style
-        if style_info['is_bold']:
-            base_offset *= 0.98  # Bold text typically sits slightly lower
-        if style_info['is_italic']:
-            base_offset *= 1.02  # Italic text typically sits slightly higher
-            
-        return base_offset
-    except Exception as e:
-        logger.warning(f"Error calculating baseline offset: {str(e)}")
-        return font_size * 0.2  # Fallback to default
-
-def adjust_text_position(x, y, font_name, font_size, style_info, page_height, original_bbox=None):
-    """Simple position adjustment using original bbox when available."""
-    try:
-        if original_bbox:
-            # Use original position directly, just convert to PDF coordinates
-            return original_bbox[0], page_height - original_bbox[1]
-        return x, y
-    except Exception as e:
-        logger.warning(f"Error adjusting text position: {str(e)}")
-        return x, y
-
-def calculate_optimal_spacing(c, font_name, font_size, style_info, available_width, total_text_width, n_spaces):
-    """Calculate optimal spacing between words based on typography rules."""
-    try:
-        # Get base space width
-        base_space = c.stringWidth(" ", font_name, font_size)
-        
-        # Calculate ideal spacing
-        if n_spaces > 0:
-            # Calculate the ideal space between words
-            ideal_space = (available_width - total_text_width) / n_spaces
-            
-            # Define minimum and maximum space multipliers
-            min_space_mult = 0.5  # Don't compress spaces more than 50%
-            max_space_mult = 2.0  # Don't expand spaces more than 200%
-            
-            # Adjust space based on style
-            if style_info['is_bold']:
-                min_space_mult = 0.6  # More minimum space for bold
-                max_space_mult = 1.8  # Less maximum space for bold
-            if style_info['is_italic']:
-                min_space_mult = 0.55  # More minimum space for italic
-                max_space_mult = 1.9  # More maximum space for italic
-                
-            # Apply limits
-            min_space = base_space * min_space_mult
-            max_space = base_space * max_space_mult
-            
-            # Clamp the ideal space between min and max
-            return max(min_space, min(ideal_space, max_space))
-        else:
-            return base_space
-    except Exception as e:
-        logger.warning(f"Error calculating optimal spacing: {str(e)}")
-        return c.stringWidth(" ", font_name, font_size)
-
 def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=None, selected_suggestions=None):
     """
-    Saves proofread text to a new PDF file while preserving original positions.
+    Saves proofread text to a new PDF file with enhanced font style preservation.
     """
     try:
         from reportlab.pdfgen import canvas as rl_canvas
@@ -1025,17 +912,27 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                 except Exception as e:
                     logger.warning(f"Could not draw image at ({x0},{y0_rl}): {e}")
             
-            # Process text while preserving original positions
+            # Process text with enhanced style handling
             blocks = mupdf_page.get_text("dict")["blocks"]
             for block in blocks:
                 if "lines" in block:
                     for line in block["lines"]:
                         if "spans" in line:
                             line_spans = line["spans"]
+                            x0s = [span["bbox"][0] for span in line_spans]
+                            x1s = [span["bbox"][2] for span in line_spans]
+                            line_x0 = min(x0s)
+                            line_x1 = max(x1s)
                             
-                            # Process each span separately
+                            line_words = []
                             for span in line_spans:
-                                # Get style information
+                                original_words = span["text"].split()
+                                n_words = len(original_words)
+                                draw_words = aligned_spans[span_word_idx:span_word_idx + n_words]
+                                line_words.extend(draw_words if draw_words else original_words)
+                                span_word_idx += n_words
+                                
+                                # Get font and style information
                                 style_info = span.get('style_info', detect_font_style(span))
                                 font_name = get_font_name(span.get("font", "Helvetica"))
                                 font_size = span.get("size", 11)
@@ -1050,56 +947,30 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                                 
                                 c.setFont(font_name, font_size)
                                 
-                                # Get words for this span
-                                original_words = span["text"].split()
-                                n_words = len(original_words)
-                                draw_words = aligned_spans[span_word_idx:span_word_idx + n_words]
-                                span_words = draw_words if draw_words else original_words
-                                span_word_idx += n_words
+                                # Calculate text width with style consideration
+                                total_word_width = sum([c.stringWidth(w, font_name, font_size) for w in line_words])
+                                n_spaces = len(line_words) - 1
+                                available_width = line_x1 - line_x0
                                 
-                                if not span_words:
-                                    continue
-                                    
-                                # Calculate word positions based on original text
-                                if len(span_words) == len(original_words):
-                                    # If we have the same number of words, use original positions
-                                    text_width = span["bbox"][2] - span["bbox"][0]
-                                    char_positions = []
-                                    current_pos = 0
-                                    
-                                    # Calculate character positions in original text
-                                    for word in original_words:
-                                        word_start = span["text"].find(word, current_pos)
-                                        if word_start >= 0:
-                                            char_positions.append(word_start)
-                                            current_pos = word_start + len(word)
-                                    
-                                    # Draw each word at its calculated position
-                                    for i, word in enumerate(span_words):
-                                        if i < len(char_positions):
-                                            # Calculate position based on character position
-                                            ratio = char_positions[i] / len(span["text"])
-                                            x = span["bbox"][0] + (text_width * ratio)
-                                            y = page_height - span["bbox"][1]
-                                            
-                                            # Draw the word
-                                            draw_x, draw_y = adjust_text_position(x, y, font_name, font_size, style_info, page_height, original_bbox=span["bbox"])
-                                            c.drawString(draw_x, draw_y, word)
+                                # Draw text with justification
+                                if n_spaces > 0 and total_word_width < available_width:
+                                    extra_space = (available_width - total_word_width) / n_spaces
+                                    x = line_x0
+                                    for i, word in enumerate(line_words):
+                                        c.drawString(x, page_height - span["bbox"][1], word)
+                                        word_width = c.stringWidth(word, font_name, font_size)
+                                        if i < n_spaces:
+                                            x += word_width + extra_space
                                 else:
-                                    # Fallback: if word count doesn't match, draw as a single span
-                                    x = span["bbox"][0]
-                                    y = page_height - span["bbox"][1]
-                                    c.drawString(x, y, " ".join(span_words))
-                            
-                            # Move to next line
-                            span_word_idx += 1
-                        
+                                    x = line_x0
+                                    c.drawString(x, page_height - span["bbox"][1], ' '.join(line_words))
+            
             if page_num < len(doc) - 1:
                 c.showPage()
                 
         c.save()
         doc.close()
-        logger.info("PDF saved successfully with original position preservation.")
+        logger.info("PDF saved successfully with enhanced font style preservation.")
         
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
