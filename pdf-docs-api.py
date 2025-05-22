@@ -903,12 +903,31 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         'justify': TA_JUSTIFY
                     }
                     
-                    # Get indentation and spacing
-                    left_indent = para_lines[0].get('indentation', 0)
-                    right_indent = para_lines[0].get('right_margin', 0)
-                    space_before = para_lines[0].get('paragraph_spacing', 0)
-                    space_after = para_lines[0].get('line_spacing', 0)
+                    # Get indentation and spacing - adjusting values based on observation
+                    # These values might need further tuning based on specific PDF characteristics
+                    left_indent = max(0, para_lines[0].get('indentation', 0))
+                    right_indent = max(0, para_lines[0].get('right_margin', 0))
                     
+                    # Simple heuristic for spacing: add space if the gap between lines is significant
+                    space_after = 0
+                    if page_idx < len(page_numbers) - 1 or para_lines[-1] != lines_by_page[page_num][-1]:
+                         # Check spacing to the next line if it exists
+                         next_line_index = para_lines[-1]['line_index'] + 1
+                         if next_line_index < len(formatted_lines):
+                             next_line = formatted_lines[next_line_index]
+                             # A significant vertical gap suggests a new paragraph or extra spacing
+                             if next_line['y_pos'] - para_lines[-1]['y_pos'] > para_lines[-1]['line_height'] * 1.5: # Threshold 1.5 times line height
+                                  space_after = para_lines[-1]['line_height'] * 0.8 # Add some space, adjust multiplier as needed
+
+                    space_before = 0
+                    if page_idx > 0 or para_lines[0] != lines_by_page[page_num][0]:
+                        # Check spacing from the previous line if it exists
+                        prev_line_index = para_lines[0]['line_index'] - 1
+                        if prev_line_index >= 0:
+                            prev_line = formatted_lines[prev_line_index]
+                            if para_lines[0]['y_pos'] - prev_line['y_pos'] > prev_line['line_height'] * 1.5:
+                                space_before = prev_line['line_height'] * 0.8
+
                     # Create paragraph style with all formatting
                     style = ParagraphStyle(
                         name='Custom',
