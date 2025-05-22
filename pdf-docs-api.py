@@ -10,7 +10,7 @@ from reportlab.lib.colors import Color
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Frame, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Frame, PageBreak, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 import io
 import logging
@@ -20,6 +20,7 @@ import numpy as np
 from collections import defaultdict
 import difflib
 from reportlab.lib.enums import TA_JUSTIFY
+import tempfile
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -721,111 +722,86 @@ def apply_proofread_text(original_text, proofread_text, selected_suggestions=Non
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
-    Saves proofread text to a new PDF file while preserving the exact formatting, images, and structure of the original PDF.
+    Saves proofread text to a new PDF file with true full justification using ReportLab, and matches the placement of images from the uploaded file.
     """
     try:
-        # Open the original PDF to get its structure
-        original_doc = fitz.open(original_pdf_path)
-        new_doc = fitz.open()
-        
-        # Extract the original text for comparison
-        original_text = ""
-        text_blocks = []
-        for page in original_doc:
-            blocks = page.get_text("dict")["blocks"]
-            text_blocks.extend(blocks)
-            original_text += page.get_text()
-        
-        # Apply proofreading changes
-        text_mapping = apply_proofread_text(original_text, text)
-        
-        # Process each page
-        for page_num in range(len(original_doc)):
-            # Get the original page
-            original_page = original_doc[page_num]
-            
-            # Create a new page with the same dimensions
-            new_page = new_doc.new_page(width=original_page.rect.width, height=original_page.rect.height)
-            
-            # Copy all images from the original page
-            image_list = original_page.get_images(full=True)
-            for img_index, img in enumerate(image_list):
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.enums import TA_JUSTIFY
+        from reportlab.lib.colors import Color
+        from reportlab.lib.pagesizes import letter
+        import tempfile
+        register_fonts()
+        doc_template = SimpleDocTemplate(
+            pdf_path,
+            pagesize=letter,
+            leftMargin=72, rightMargin=72, topMargin=72, bottomMargin=72
+        )
+        page_width, page_height = letter
+
+        # Extract images and their positions from the original PDF using PyMuPDF
+        doc = fitz.open(original_pdf_path)
+        images_by_page = {}
+        for page_num in range(len(doc)):
+            mupdf_page = doc[page_num]
+            image_list = mupdf_page.get_images(full=True)
+            images = []
+            for img in image_list:
                 xref = img[0]
-                base_image = original_doc.extract_image(xref)
+                base_image = doc.extract_image(xref)
                 image_bytes = base_image["image"]
                 image_ext = base_image["ext"]
-                
-                # Insert the image at the same position
-                image_rect = original_page.get_image_bbox(img)
-                new_page.insert_image(image_rect, stream=image_bytes)
-            
-            # Get the text blocks from the original page
-            page_blocks = original_page.get_text("dict")["blocks"]
-            
-            # Process each text block
-            for block in page_blocks:
-                if "lines" in block:
-                    for line in block["lines"]:
-                        if "spans" in line:
-                            for span in line["spans"]:
-                                # Get the original text and its position
-                                original_span_text = span["text"]
-                                bbox = fitz.Rect(span["bbox"])
-                                
-                                if original_span_text.strip():
-                                    # Find the corresponding proofread text
-                                    span_start = original_text.find(original_span_text)
-                                    if span_start != -1:
-                                        # Get the proofread version from our mapping
-                                        proofread_span = original_span_text
-                                        for pos, mapping in sorted(text_mapping.items()):
-                                            if span_start <= pos < span_start + len(original_span_text):
-                                                # Calculate the relative position within this span
-                                                rel_pos = pos - span_start
-                                                # Replace the text at this position
-                                                proofread_span = (
-                                                    proofread_span[:rel_pos] +
-                                                    mapping['proofread'] +
-                                                    proofread_span[rel_pos + mapping['length']:]
-                                                )
-                                        
-                                        # Insert the proofread text with the same formatting
-                                        font_name = get_font_name(span.get("font", "Helvetica"))
-                                        try:
-                                            new_page.insert_text(
-                                                bbox.tl,  # Top-left point of the original text
-                                                proofread_span,
-                                                fontname=font_name,
-                                                fontsize=span.get("size", 11),
-                                                color=span.get("color", 0),
-                                                render_mode=span.get("render_mode", 0)
-                                            )
-                                        except Exception as e:
-                                            logger.warning(f"Font error with '{font_name}', falling back to Helvetica: {e}")
-                                            new_page.insert_text(
-                                                bbox.tl,
-                                                proofread_span,
-                                                fontname="Helvetica",
-                                                fontsize=span.get("size", 11),
-                                                color=span.get("color", 0),
-                                                render_mode=span.get("render_mode", 0)
-                                            )
-            
-            # Copy any other elements (like annotations, links, etc.)
-            for annot in original_page.annots():
-                new_page.insert_annot(annot)
-            
-            # Copy any links
-            for link in original_page.get_links():
-                new_page.insert_link(link)
-        
-        # Save the new PDF
-        new_doc.save(pdf_path)
-        new_doc.close()
-        original_doc.close()
-        
-        logger.info("PDF saved successfully with original formatting and images preserved")
-        
+                bbox = mupdf_page.get_image_bbox(img)
+                temp_img = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{image_ext}')
+                temp_img.write(image_bytes)
+                temp_img.close()
+                images.append({
+                    'path': temp_img.name,
+                    'bbox': bbox,  # fitz.Rect(x0, y0, x1, y1)
+                })
+            images_by_page[page_num] = images
+        doc.close()
+
+        # Split proofread text into paragraphs
+        paragraphs = text.split('\n\n')
+
+        story = []
+        for para_text in paragraphs:
+            if not para_text.strip():
+                continue
+            style = ParagraphStyle(
+                name='Justified',
+                fontName='Helvetica',
+                fontSize=12,
+                leading=14,
+                textColor=Color(0, 0, 0),
+                alignment=TA_JUSTIFY,
+                spaceAfter=8,
+                spaceBefore=0,
+                leftIndent=0,
+                rightIndent=0,
+            )
+            para_obj = Paragraph(para_text, style)
+            story.append(para_obj)
+            story.append(Spacer(1, 8))
+
+        def draw_images_on_page(canvas, doc):
+            page_num = doc.page - 1  # 0-based
+            if page_num in images_by_page:
+                for img in images_by_page[page_num]:
+                    bbox = img['bbox']
+                    x0, y0, x1, y1 = bbox
+                    img_width = x1 - x0
+                    img_height = y1 - y0
+                    # ReportLab's y=0 is at the bottom, so flip y
+                    y0_rl = page_height - y1
+                    try:
+                        canvas.drawImage(img['path'], x0, y0_rl, width=img_width, height=img_height)
+                    except Exception as e:
+                        logger.warning(f"Could not draw image at ({x0},{y0_rl}): {e}")
+
+        doc_template.build(story, onFirstPage=draw_images_on_page, onLaterPages=draw_images_on_page)
+        logger.info("PDF saved successfully with full justification and image placement matched.")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
