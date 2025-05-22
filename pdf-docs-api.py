@@ -881,40 +881,76 @@ def calculate_text_width(c, text, font_name, font_size, style_info):
         logger.warning(f"Error calculating text width: {str(e)}")
         return c.stringWidth(text, font_name, font_size) * 1.02  # Fallback with minimal padding
 
-def adjust_text_position(x, y, font_name, font_size, style_info, is_first_word=False, is_last_word=False):
-    """Adjust text position with refined positioning for better typography."""
+def get_baseline_offset(font_name, font_size, style_info):
+    """Calculate proper baseline offset for different font styles."""
+    try:
+        # Base offset is typically 20% of font size
+        base_offset = font_size * 0.2
+        
+        # Adjust for font family
+        if 'times' in font_name.lower() or 'georgia' in font_name.lower():
+            base_offset *= 0.95  # Serif fonts typically have lower baseline
+        elif 'helvetica' in font_name.lower() or 'arial' in font_name.lower():
+            base_offset *= 1.05  # Sans-serif fonts typically have higher baseline
+            
+        # Adjust for style
+        if style_info['is_bold']:
+            base_offset *= 0.98  # Bold text typically sits slightly lower
+        if style_info['is_italic']:
+            base_offset *= 1.02  # Italic text typically sits slightly higher
+            
+        return base_offset
+    except Exception as e:
+        logger.warning(f"Error calculating baseline offset: {str(e)}")
+        return font_size * 0.2  # Fallback to default
+
+def adjust_text_position(x, y, font_name, font_size, style_info, is_first_word=False, is_last_word=False, original_bbox=None):
+    """Adjust text position with precise alignment to original layout."""
     try:
         # Initialize adjustments
         x_adjust = 0
         y_adjust = 0
         
-        # Font family specific adjustments
-        is_serif = any(f in font_name.lower() for f in ['times', 'georgia'])
-        is_sans = any(f in font_name.lower() for f in ['helvetica', 'arial', 'calibri'])
+        # Get baseline offset
+        baseline_offset = get_baseline_offset(font_name, font_size, style_info)
         
-        # Horizontal adjustments
-        if is_first_word:
-            if style_info['is_bold']:
-                x_adjust += font_size * (0.015 if is_serif else 0.01)  # Less shift for sans-serif
-            if style_info['is_italic']:
-                x_adjust += font_size * (0.02 if is_serif else 0.015)  # More shift for serif italic
-                
-        if is_last_word:
-            if style_info['is_bold']:
-                x_adjust -= font_size * 0.01  # Slight pull back for bold
-            if style_info['is_italic']:
-                x_adjust -= font_size * 0.015  # More pull back for italic
-                
-        # Vertical adjustments for better baseline alignment
-        if style_info['is_bold']:
-            y_adjust += font_size * (0.015 if is_serif else 0.01)  # Slight upward shift
-        if style_info['is_italic']:
-            y_adjust += font_size * (0.02 if is_serif else 0.015)  # More shift for serif italic
+        # If we have original bbox, use it for precise positioning
+        if original_bbox:
+            # Calculate vertical position based on original bbox
+            # The bbox[1] is the top of the text, we need to adjust for baseline
+            y = original_bbox[1] - baseline_offset
             
-        # Additional adjustments for style combinations
-        if style_info['is_bold'] and style_info['is_italic']:
-            y_adjust += font_size * 0.01  # Extra shift for combined styles
+            # For first word, use original x position
+            if is_first_word:
+                x = original_bbox[0]
+        else:
+            # Fallback to style-based adjustments
+            # Font family specific adjustments
+            is_serif = any(f in font_name.lower() for f in ['times', 'georgia'])
+            is_sans = any(f in font_name.lower() for f in ['helvetica', 'arial', 'calibri'])
             
+            # Horizontal adjustments - much smaller now
+            if is_first_word:
+                if style_info['is_bold']:
+                    x_adjust += font_size * 0.005  # Very slight shift for bold
+                if style_info['is_italic']:
+                    x_adjust += font_size * 0.008  # Very slight shift for italic
+                    
+            if is_last_word:
+                if style_info['is_bold']:
+                    x_adjust -= font_size * 0.005  # Very slight pull back
+                if style_info['is_italic']:
+                    x_adjust -= font_size * 0.008  # Very slight pull back
+                    
+            # Vertical adjustments - now based on baseline
+            y_adjust = -baseline_offset  # Negative because PDF coordinates are bottom-up
+            
+            # Small style-specific adjustments
+            if style_info['is_bold']:
+                y_adjust += font_size * 0.005  # Tiny upward shift for bold
+            if style_info['is_italic']:
+                y_adjust += font_size * 0.008  # Tiny upward shift for italic
+                
         return x + x_adjust, y + y_adjust
     except Exception as e:
         logger.warning(f"Error adjusting text position: {str(e)}")
@@ -957,7 +993,7 @@ def calculate_optimal_spacing(c, font_name, font_size, style_info, available_wid
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=None, selected_suggestions=None):
     """
-    Saves proofread text to a new PDF file with enhanced typography and spacing.
+    Saves proofread text to a new PDF file with precise alignment and positioning.
     """
     try:
         from reportlab.pdfgen import canvas as rl_canvas
@@ -1030,22 +1066,24 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                 except Exception as e:
                     logger.warning(f"Could not draw image at ({x0},{y0_rl}): {e}")
             
-            # Process text with enhanced typography
+            # Process text with precise alignment
             blocks = mupdf_page.get_text("dict")["blocks"]
             for block in blocks:
                 if "lines" in block:
                     for line in block["lines"]:
                         if "spans" in line:
                             line_spans = line["spans"]
-                            x0s = [span["bbox"][0] for span in line_spans]
-                            x1s = [span["bbox"][2] for span in line_spans]
-                            line_x0 = min(x0s)
-                            line_x1 = max(x1s)
+                            
+                            # Get line boundaries from original spans
+                            line_x0 = min(span["bbox"][0] for span in line_spans)
+                            line_x1 = max(span["bbox"][2] for span in line_spans)
+                            line_y0 = min(span["bbox"][1] for span in line_spans)
+                            line_y1 = max(span["bbox"][3] for span in line_spans)
                             
                             # Calculate total available width for the line
                             available_width = line_x1 - line_x0
                             
-                            # Process each span separately to maintain style
+                            # Process each span separately to maintain style and position
                             current_x = line_x0
                             for span_idx, span in enumerate(line_spans):
                                 # Get style information
@@ -1087,21 +1125,33 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                                     available_width, total_span_width, n_spaces
                                 )
                                 
-                                # Draw each word with proper spacing
+                                # Draw each word with precise positioning
                                 for i, (word, word_width) in enumerate(zip(span_words, word_widths)):
                                     # Determine if this is the first or last word
                                     is_first = (i == 0 and current_x == line_x0)
                                     is_last = (i == len(span_words) - 1 and span == line_spans[-1])
                                     
-                                    # Adjust position based on style and context
+                                    # Get original bbox for this word if available
+                                    word_bbox = None
+                                    if i < len(original_words):
+                                        # Calculate approximate bbox for this word
+                                        word_start = span["text"].find(original_words[i])
+                                        if word_start >= 0:
+                                            word_width_ratio = len(original_words[i]) / len(span["text"])
+                                            word_x0 = span["bbox"][0] + (span["bbox"][2] - span["bbox"][0]) * (word_start / len(span["text"]))
+                                            word_x1 = word_x0 + (span["bbox"][2] - span["bbox"][0]) * word_width_ratio
+                                            word_bbox = (word_x0, span["bbox"][1], word_x1, span["bbox"][3])
+                                    
+                                    # Adjust position based on style and original layout
                                     draw_x, draw_y = adjust_text_position(
                                         current_x,
-                                        page_height - span["bbox"][1],
+                                        page_height - line_y1,  # Convert to PDF coordinates
                                         font_name,
                                         font_size,
                                         style_info,
                                         is_first_word=is_first,
-                                        is_last_word=is_last
+                                        is_last_word=is_last,
+                                        original_bbox=word_bbox
                                     )
                                     
                                     # Draw the word
@@ -1116,11 +1166,11 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                                 # Add a style-aware gap between spans
                                 if span != line_spans[-1]:
                                     # Calculate gap based on font size and style
-                                    gap_multiplier = 0.1  # Base gap
+                                    gap_multiplier = 0.05  # Reduced base gap
                                     if style_info['is_bold']:
-                                        gap_multiplier += 0.02
+                                        gap_multiplier += 0.01
                                     if style_info['is_italic']:
-                                        gap_multiplier += 0.02
+                                        gap_multiplier += 0.01
                                     current_x += font_size * gap_multiplier
                             
                             # Move to next line
@@ -1131,7 +1181,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                 
         c.save()
         doc.close()
-        logger.info("PDF saved successfully with enhanced typography and spacing.")
+        logger.info("PDF saved successfully with precise alignment and positioning.")
         
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
