@@ -764,6 +764,108 @@ def extract_text_with_formatting(pdf_path):
         logger.error(f"Error extracting text with formatting: {str(e)}")
         raise
 
+def detect_text_alignment(page, line_words):
+    """
+    Detects text alignment for a line of text.
+    Returns one of: 'LEFT', 'CENTER', 'RIGHT', 'JUSTIFY'
+    """
+    try:
+        if not line_words:
+            return 'JUSTIFY'  # Default to justified alignment
+            
+        # Get page width
+        page_width = page.width
+        
+        # Calculate line width and position
+        line_start = line_words[0]['x0']
+        line_end = line_words[-1]['x0'] + line_words[-1]['width']
+        line_width = line_end - line_start
+        
+        # Calculate margins (assuming standard margins)
+        left_margin = 72  # 1 inch in points
+        right_margin = page_width - 72
+        
+        # Calculate available width
+        available_width = right_margin - left_margin
+        
+        # Debug logging
+        logger.debug(f"Line width: {line_width}, Available width: {available_width}")
+        logger.debug(f"Number of words: {len(line_words)}")
+        
+        # First, check if this is a multi-word line that spans most of the width
+        if len(line_words) > 2:
+            # Calculate the percentage of available width used
+            width_percentage = (line_width / available_width) * 100
+            logger.debug(f"Width percentage: {width_percentage}%")
+            
+            # If the line uses more than 60% of the available width, it's probably justified
+            if width_percentage > 60:
+                logger.debug("Detected as justified text based on width percentage")
+                return 'JUSTIFY'
+        
+        # Check for justification by looking at word spacing
+        if len(line_words) > 1:
+            total_gap = 0
+            gaps = []
+            for i in range(len(line_words) - 1):
+                gap = line_words[i+1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
+                gaps.append(gap)
+                total_gap += gap
+            avg_gap = total_gap / (len(line_words) - 1)
+            
+            # Calculate gap variance to detect justified text
+            gap_variance = sum((g - avg_gap) ** 2 for g in gaps) / len(gaps) if gaps else 0
+            
+            logger.debug(f"Average gap: {avg_gap}, Gap variance: {gap_variance}")
+            logger.debug(f"Line start: {line_start}, Left margin: {left_margin}")
+            
+            # Check for justified text based on multiple criteria
+            is_justified = False
+            
+            # Criterion 1: Line spans most of the width
+            if line_width > available_width * 0.7:
+                is_justified = True
+                
+            # Criterion 2: Uniform word spacing
+            if len(gaps) > 1 and gap_variance < 200 and avg_gap > 2:
+                is_justified = True
+                
+            # Criterion 3: Multiple words with reasonable spacing
+            if len(line_words) > 2 and avg_gap > 1 and line_width > available_width * 0.5:
+                is_justified = True
+                
+            if is_justified:
+                logger.debug("Detected as justified text based on spacing")
+                return 'JUSTIFY'
+        
+        # Check for center alignment
+        center_point = (left_margin + right_margin) / 2
+        line_center = (line_start + line_end) / 2
+        
+        # More strict center alignment check
+        if (abs(line_center - center_point) < 15 and  # Reduced tolerance for center alignment
+            abs(line_width - available_width) > 50):  # Center-aligned text is usually shorter
+            return 'CENTER'
+            
+        # Check for right alignment - more strict conditions
+        if (abs(line_end - right_margin) < 20 and  # Text ends near right margin
+            abs(line_start - left_margin) > 50 and  # Text starts far from left margin
+            abs(line_width - available_width) < 50):  # Text is not full width
+            return 'RIGHT'
+            
+        # Check for left alignment - very strict conditions
+        if (abs(line_start - left_margin) < 20 and  # Text starts near left margin
+            abs(line_width - available_width) < 50 and  # Text is not full width
+            len(line_words) <= 2):  # Left-aligned text is usually short
+            return 'LEFT'
+            
+        # Default to justified alignment
+        return 'JUSTIFY'
+        
+    except Exception as e:
+        logger.warning(f"Error detecting text alignment: {str(e)}")
+        return 'JUSTIFY'  # Default to justified alignment on error
+
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
@@ -884,124 +986,6 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
-
-def detect_text_alignment(page, line_words):
-    """
-    Detects text alignment for a line of text.
-    Returns one of: 'LEFT', 'CENTER', 'RIGHT', 'JUSTIFY'
-    """
-    try:
-        if not line_words:
-            return 'JUSTIFY'  # Default to justified alignment
-            
-        # Get page width
-        page_width = page.width
-        
-        # Calculate line width and position
-        line_start = line_words[0]['x0']
-        line_end = line_words[-1]['x0'] + line_words[-1]['width']
-        line_width = line_end - line_start
-        
-        # Calculate margins (assuming standard margins)
-        left_margin = 72  # 1 inch in points
-        right_margin = page_width - 72
-        
-        # Calculate available width
-        available_width = right_margin - left_margin
-        
-        # Debug logging
-        logger.debug(f"Line width: {line_width}, Available width: {available_width}")
-        logger.debug(f"Number of words: {len(line_words)}")
-        
-        # First, check if this is a multi-word line that spans most of the width
-        if len(line_words) > 2:
-            # Calculate the percentage of available width used
-            width_percentage = (line_width / available_width) * 100
-            logger.debug(f"Width percentage: {width_percentage}%")
-            
-            # If the line uses more than 60% of the available width, it's probably justified
-            if width_percentage > 60:
-                logger.debug("Detected as justified text based on width percentage")
-                return 'JUSTIFY'
-        
-        # Check for justification by looking at word spacing
-        if len(line_words) > 1:
-            total_gap = 0
-            gaps = []
-            for i in range(len(line_words) - 1):
-                gap = line_words[i+1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
-                gaps.append(gap)
-                total_gap += gap
-            avg_gap = total_gap / (len(line_words) - 1)
-            
-            # Calculate gap variance to detect justified text
-            gap_variance = sum((g - avg_gap) ** 2 for g in gaps) / len(gaps) if gaps else 0
-            
-            logger.debug(f"Average gap: {avg_gap}, Gap variance: {gap_variance}")
-            logger.debug(f"Line start: {line_start}, Left margin: {left_margin}")
-            
-            # Extremely lenient conditions for justified text
-            is_justified = (
-                # Check if line spans a significant portion of the available width
-                (abs(line_width - available_width) < 150 or  # Even more lenient width tolerance
-                 line_width > available_width * 0.6) and  # Or at least 60% of available width
-                
-                # Check for any word spacing
-                avg_gap > 0.5 and  # Very low minimum gap threshold
-                
-                # Check for relatively uniform spacing
-                gap_variance < 300 and  # Much higher variance threshold
-                
-                # Check if text starts near left margin
-                abs(line_start - left_margin) < 100  # Very lenient left margin tolerance
-            )
-            
-            # Additional checks for justified text
-            if len(line_words) > 2:
-                # If we have multiple words and any spacing between them, it's probably justified
-                if avg_gap > 0.5 and line_width > available_width * 0.5:
-                    is_justified = True
-                
-                # If the line is wide and has multiple words, it's probably justified
-                if line_width > available_width * 0.7:
-                    is_justified = True
-            
-            if is_justified:
-                logger.debug("Detected as justified text based on spacing")
-                return 'JUSTIFY'
-        
-        # Check for center alignment
-        center_point = (left_margin + right_margin) / 2
-        line_center = (line_start + line_end) / 2
-        
-        # More strict center alignment check
-        if (abs(line_center - center_point) < 15 and  # Reduced tolerance for center alignment
-            abs(line_width - available_width) > 50):  # Center-aligned text is usually shorter
-            return 'CENTER'
-            
-        # Check for right alignment - more strict conditions
-        if (abs(line_end - right_margin) < 20 and  # Text ends near right margin
-            abs(line_start - left_margin) > 50 and  # Text starts far from left margin
-            abs(line_width - available_width) < 50):  # Text is not full width
-            return 'RIGHT'
-            
-        # Check for left alignment - very strict conditions
-        if (abs(line_start - left_margin) < 20 and  # Text starts near left margin
-            abs(line_width - available_width) < 50 and  # Text is not full width
-            len(line_words) <= 2):  # Left-aligned text is usually short
-            return 'LEFT'
-            
-        # Final fallback: if we have multiple words and the line is reasonably wide, it's justified
-        if len(line_words) > 2 and line_width > available_width * 0.5:
-            logger.debug("Detected as justified text based on final fallback")
-            return 'JUSTIFY'
-            
-        # Default to justified alignment
-        return 'JUSTIFY'
-        
-    except Exception as e:
-        logger.warning(f"Error detecting text alignment: {str(e)}")
-        return 'JUSTIFY'  # Default to justified alignment on error
 
 @app.route('/convert', methods=['POST'])
 def convert_and_proofread():
