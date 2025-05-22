@@ -1003,208 +1003,164 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                  original_span_end_in_concat = original_char_pos_for_drawing + original_span_length
 
                  # Iterate through opcodes to find the corresponding corrected text
-                 temp_original_cursor = 0
-                 temp_corrected_cursor = 0
+                 current_original_pos_in_opcodes = 0 # Tracks position within the original text as we iterate through opcodes
+                 current_corrected_pos_in_opcodes = 0 # Tracks position within the corrected text as we iterate through opcodes
 
                  for tag, i1, i2, j1, j2 in sm.get_opcodes():
-                     # Check for overlap between the original span's range and the opcode's original range
-                     overlap_start_in_original = max(i1, original_span_start_in_concat)
-                     overlap_end_in_original = min(i2, original_span_end_in_concat)
+                     # Original range of the current opcode: i1 to i2 in original_full_text_concat
+                     # Corrected range of the current opcode: j1 to j2 in corrected_full_text
 
-                     if overlap_start_in_original < overlap_end_in_original:
-                          # Calculate the corresponding range in the corrected text
-                          # This assumes a linear mapping within the overlapping part
-                          corrected_overlap_start = j1 + (overlap_start_in_original - i1)
-                          corrected_overlap_end = j1 + (overlap_end_in_original - i1)
+                     # Calculate the overlap between the original span's range and the opcode's original range
+                     overlap_start_in_original_span = max(original_span_start_in_concat, i1)
+                     overlap_end_in_original_span = min(original_span_end_in_concat, i2)
 
-                          # Append the corresponding part of the corrected text
-                          corrected_segment_parts.append(corrected_full_text[corrected_overlap_start:corrected_overlap_end])
+                     # If there is an overlap in the original text ranges
+                     if overlap_start_in_original_span < overlap_end_in_original_span:
+                         # Determine the corresponding segment in the corrected text
+                         corrected_overlap_start = -1
+                         corrected_overlap_end = -1
 
-                     # If the opcode's original range is past the span, we can stop
-                     if i1 >= original_span_end_in_concat and temp_original_cursor > original_span_end_in_concat:
-                          break # Optimization: stop if we are past the span in original text
+                         if tag == 'equal' or tag == 'replace':
+                             # For equal/replace, map the overlapping range from original to corrected opcode range
+                             pos_in_opcode_original = overlap_start_in_original_span - i1
+                             corrected_overlap_start = j1 + pos_in_opcode_original
 
-                     temp_original_cursor += (i2 - i1)
-                     temp_corrected_cursor += (j2 - j1)
+                             # Calculate the length of the overlap in the original text
+                             overlap_length = overlap_end_in_original_span - overlap_start_in_original_span
+
+                             # The corresponding end in corrected depends on the tag
+                             if tag == 'equal':
+                                 corrected_overlap_end = corrected_overlap_start + overlap_length # Length is the same
+                             elif tag == 'replace' and (i2 - i1) > 0:
+                                 # For replace, scale the overlap length by the ratio of corrected to original opcode lengths
+                                 proportion_of_opcode = (overlap_end_in_original_span - overlap_start_in_original_span) / (i2 - i1)
+                                 corrected_overlap_end = j1 + int(proportion_of_opcode * (j2 - j1)) # Approximate end
+                             else: # Handle replace with empty original segment (shouldn't overlap this way)
+                                  corrected_overlap_end = corrected_overlap_start
+
+                         elif tag == 'insert':
+                             # For an insertion, if the insertion point (i1) is within the original span's range,
+                             # we consider the entire inserted segment (j1 to j2) as potentially belonging to this span.
+                             # This is a heuristic; a more precise method is very complex.
+                             # Let's check if the insertion point is within the span's *original* boundaries.
+                             if i1 >= original_span_start_in_concat and i1 < original_span_end_in_concat:
+                                 corrected_overlap_start = j1
+                                 corrected_overlap_end = j2
+
+                         elif tag == 'delete':
+                             # For a deletion, the corrected range is empty. If the deletion range overlaps the original span,
+                             # it means part of the original span was deleted. There is no corresponding corrected text.
+                             corrected_overlap_start = j1 # End of previous segment in corrected text
+                             corrected_overlap_end = j1 # No text added
+
+
+                         # Append the corresponding corrected text segment if valid
+                         if corrected_overlap_start != -1 and corrected_overlap_start <= corrected_overlap_end:
+                              corrected_segment_parts.append(corrected_full_text[corrected_overlap_start:corrected_overlap_end])
+                         elif corrected_overlap_start != -1 and corrected_overlap_start > corrected_overlap_end:
+                             logger.warning(f"Calculated reversed corrected overlap range: {corrected_overlap_start}-{corrected_overlap_end} for tag {tag}, original span range {original_span_start_in_concat}-{original_span_end_in_concat}")
+                             # Append empty string to avoid errors with reversed ranges
+                             corrected_segment_parts.append("")
+                         # If corrected_overlap_start is still -1, no valid corrected segment found for this overlap
+
+
+                     # If the original range of the current opcode starts after the original span's end,
+                     # we can break the opcode iteration for this span.
+                     if i1 >= original_span_end_in_concat:
+                         break
 
 
                  corrected_segment_for_span = "".join(corrected_segment_parts)
 
-                 # Handle cases where the original span might have been completely deleted
-                 # In this case, corrected_segment_for_span will be empty, which is correct.
-
                  # If the corrected segment is empty or only whitespace, and the original span had text,
                  # this might indicate a deletion or a mapping issue. We should skip drawing this segment.
-                 if not corrected_segment_for_span.strip():
+                 # Only skip if the original span had content and the corrected one is empty/whitespace.
+                 if not corrected_segment_for_span.strip() and original_span_length > 0 and original_span_text.strip():
                       original_char_pos_for_drawing += original_span_length
-                      continue # Skip drawing empty or whitespace-only corrected segments
+                      continue # Skip drawing empty or whitespace-only corrected segments that replaced non-empty original text
+                 # If the original span was empty/whitespace, and corrected is also empty/whitespace, we also skip.
+                 if not corrected_segment_for_span.strip() and not original_span_text.strip():
+                      original_char_pos_for_drawing += original_span_length
+                      continue
+
+
+                 # Calculate text position within the span bbox to preserve original alignment
+                 text_x = span_bbox.x0 # Default horizontal position
+                 text_y = span_bbox.y0 # Default vertical position (top of bbox)
 
                  # Get font for drawing
                  image_font = None
                  pillow_font_size = int(font_size)
 
-                 # Attempt to load the font file
-                 try:
-                     # Try loading by original font name first (exact match)
-                     try:
-                          image_font = ImageFont.truetype(font_name, pillow_font_size)
-                     except IOError:
-                          # If direct load fails, try searching system fonts with style hints
-                          font_path = None
-                          import platform
-                          if platform.system() == "Windows":
-                              font_dirs = [os.path.join(os.environ.get('WINDIR', ''), 'Fonts')]
-                          elif platform.system() == "Darwin": # macOS
-                              font_dirs = [
-                                  '/Library/Fonts',
-                                  '/System/Library/Fonts',
-                                  os.path.expanduser('~/Library/Fonts')
-                              ]
-                          else: # Linux and others
-                              font_dirs = [
-                                  '/usr/share/fonts',
-                                  '/usr/local/share/fonts',
-                                  os.path.expanduser('~/.fonts')
-                              ]
-
-                          # Construct search terms based on font name and style flags
-                          search_terms = [font_name.lower().replace(' ', '').replace('-', '')] # Base name
-                          if is_bold and is_italic: search_terms.append(search_terms[0] + "bolditalic")
-                          if is_bold: search_terms.append(search_terms[0] + "bold")
-                          if is_italic: search_terms.append(search_terms[0] + "italic")
-                          # Add common font file extensions
-                          extensions = ['.ttf', '.otf']
-
-                          found_font_path = None
-                          # Search directories for a file matching any search term and extension
-                          for font_dir in font_dirs:
-                              if os.path.exists(font_dir):
-                                  for root, _, files in os.walk(font_dir):
-                                      for file in files:
-                                          file_lower = file.lower()
-                                          for term in search_terms:
-                                              for ext in extensions:
-                                                  if term in file_lower and file_lower.endswith(ext):
-                                                      found_font_path = os.path.join(root, file)
-                                                      break
-                                              if found_font_path: break
-                                          if found_font_path: break
-                                      if found_font_path: break
-
-                          if found_font_path and os.path.exists(found_font_path):
-                               logger.info(f"Found font file: {found_font_path}")
-                               image_font = ImageFont.truetype(found_font_path, pillow_font_size)
-                          else:
-                               logger.warning(f"Font file not found for '{font_name}' (bold: {is_bold}, italic: {is_italic}). Using default Pillow font.")
-                               image_font = ImageFont.load_default()
-                               # Note: Default font size handling is different.
-
-                 except Exception as font_loading_e:
-                     logger.warning(f"Error loading font '{font_name}': {font_loading_e}. Using default Pillow font.")
-                     image_font = ImageFont.load_default()
-                     # Note: Default font size handling is different.
-
-
-                 # Calculate text position within the span bbox to preserve original alignment
-                 # We'll draw the text at the top-left of the scaled bounding box.
-                 text_x = span_bbox.x0
-                 text_y = span_bbox.y0
-
-                 # Get the rendered size of the corrected text segment using the loaded font
-                 text_width_pixels = 0
-                 text_height_pixels = 0
+                 # Calculate text dimensions before alignment adjustments
                  if image_font:
-                      try:
-                          # Use textbbox to get bounding box relative to the origin (0,0)
-                          # This gives width and height accurately for the text string with the loaded font.
-                          bbox = draw.textbbox((0, 0), corrected_segment_for_span, font=image_font)
-                          text_width_pixels = bbox[2] - bbox[0]
-                          text_height_pixels = bbox[3] - bbox[1]
-
-                          # Pillow's text rendering might place the text slightly below the top-left due to ascenders.
-                          # We can try to adjust the text_y position based on the font's ascender if available,
-                          # or a small constant offset to align the text's top edge closer to the bbox top.
-                          # This requires accessing font metrics, which vary by font file.
-                          # A simple adjustment: draw slightly higher than the bbox top.
-                          # A heuristic offset (adjust as needed) - might depend on font size.
-                          vertical_offset = pillow_font_size * 0.15 # Estimate based on common font structures
-                          text_y = span_bbox.y0 - vertical_offset
-
-                      except Exception as bbox_e:
-                           logger.warning(f"Error calculating text bbox for '{corrected_segment_for_span}': {bbox_e}. Using approximate dimensions and default vertical position.")
-                           # Fallback: approximate width/height and use default text_y
-                           text_width_pixels = len(corrected_segment_for_span) * (pillow_font_size * 0.6) # Heuristic factor
-                           text_height_pixels = pillow_font_size # Approximation
-                           text_y = span_bbox.y0 # Use default top-left
+                     try:
+                         text_render_bbox = draw.textbbox((0, 0), corrected_segment_for_span, font=image_font)
+                         text_width_pixels = text_render_bbox[2] - text_render_bbox[0]
+                         text_height_pixels = text_render_bbox[3] - text_render_bbox[1]
+                         # Adjust vertical position based on font metrics
+                         text_y = span_bbox.y0 - text_render_bbox[1]
+                     except Exception as bbox_e:
+                         logger.warning(f"Error calculating text bbox: {bbox_e}")
+                         text_width_pixels = len(corrected_segment_for_span) * (pillow_font_size * 0.6)
+                         text_height_pixels = pillow_font_size
                  else:
-                      # Fallback if font not loaded: approximate dimensions and use default text_y
-                      text_width_pixels = len(corrected_segment_for_span) * (pillow_font_size * 0.6)
-                      text_height_pixels = pillow_font_size
-                      text_y = span_bbox.y0
+                     text_width_pixels = len(corrected_segment_for_span) * (pillow_font_size * 0.6)
+                     text_height_pixels = pillow_font_size
 
-
-                 # Use the original span's width and its position within the original text run
-                 # to calculate the drawing x-coordinate. This attempts to preserve relative alignment.
-                 original_span_width = span_bbox.width
-                 
-                 # This is still a simplified approach. Ideally, we need the original text's
-                 # horizontal position *within* the span bounding box. Since we don't have
-                 # that directly, we'll use the span's x0 as the starting point and potentially
-                 # adjust based on text width if we can infer alignment.
-
-                 # A basic attempt to center or right-align text if it's shorter than the original span width
-                 # This heuristic assumes that if the corrected text is shorter, the original might have been aligned.
-                 # It doesn't handle justified text well.
-
-                 # Calculate the difference in width between the original span and the corrected text
-                 width_difference = original_span_width - text_width_pixels
-
-                 # If the corrected text is shorter, adjust the starting X position
-                 # This is a very rough guess at preserving alignment.
-                 # A more accurate method would require knowing the original alignment (left, center, right, justified).
-
-                 # Infer alignment based on width difference and span position (revisiting heuristic)
-                 alignment = 'left' # Default
+                 # Enhanced alignment detection using multiple heuristics
                  img_width, img_height = img.size
                  span_center_x = (span_bbox.x0 + span_bbox.x1) / 2
                  img_center_x = img_width / 2
+                 
+                 # Calculate margins and text block width
+                 left_margin = span_bbox.x0
+                 right_margin = img_width - span_bbox.x1
+                 text_block_width = span_bbox.x1 - span_bbox.x0
+                 
+                 # Calculate alignment score for each type
+                 center_score = 1 - min(1, abs(span_center_x - img_center_x) / (img_width * 0.1))
+                 right_score = 1 - min(1, right_margin / (left_margin + 1))
+                 justify_score = 1 - min(1, abs(text_block_width - text_width_pixels) / text_block_width)
+                 
+                 # Determine alignment based on scores
+                 alignment = 'left'  # Default
+                 max_score = 0
+                 
+                 if center_score > 0.8 and center_score > max_score:
+                     alignment = 'center'
+                     max_score = center_score
+                 if right_score > 0.8 and right_score > max_score:
+                     alignment = 'right'
+                     max_score = right_score
+                 if justify_score > 0.9 and justify_score > max_score:
+                     alignment = 'justify'
+                     max_score = justify_score
 
-                 # Simple heuristic: if corrected text is much shorter, original might have been centered or right aligned
-                 if width_difference > original_span_width * 0.1: # If corrected text is significantly shorter (more than 10% of original span width)
-                      # If the span is roughly centered on the page
-                      if abs(span_center_x - img_center_x) < img_width * 0.1:
-                           alignment = 'center'
-                      # If the span is closer to the right page edge
-                      elif (img_width - span_bbox.x1) < span_bbox.x0:
-                           alignment = 'right'
-                      # Otherwise, assume left alignment even if shorter
-
-                 # Adjust text_x based on inferred alignment and width difference
+                 # Apply alignment to text position
                  if alignment == 'right':
-                      # Align right edge of text with right edge of span bbox
-                      text_x = span_bbox.x1 - text_width_pixels
+                     text_x = span_bbox.x1 - text_width_pixels
                  elif alignment == 'center':
-                      # Center text horizontally within the span bbox
-                      text_x = span_bbox.x0 + width_difference / 2
-                 # For 'left' alignment, text_x remains span_bbox.x0
+                     text_x = span_bbox.x0 + (text_block_width - text_width_pixels) / 2
+                 elif alignment == 'justify':
+                     # For justified text, we'll use the full width of the span
+                     text_x = span_bbox.x0
+                     # Note: Actual justification would require word spacing adjustment
+                     # which is complex to implement with PIL
+                 else:  # left alignment
+                     text_x = span_bbox.x0
 
-                 # Ensure text_x does not go beyond span bounds on the left (basic clamping)
-                 text_x = max(span_bbox.x0, text_x)
-                 # Don't clamp text_x on the right, as overflow might be intended or unavoidable with longer text.
-
+                 # Ensure text doesn't go beyond span bounds
+                 text_x = max(span_bbox.x0, min(text_x, span_bbox.x1 - text_width_pixels))
 
                  # Draw the corrected text onto the image
                  try:
-                     # If font was loaded successfully, use it
                      if image_font:
                          draw.text((text_x, text_y), corrected_segment_for_span, fill=color_rgb, font=image_font)
                      else:
-                         # Fallback if font loading failed completely (use default PIL font implicitly)
                          draw.text((text_x, text_y), corrected_segment_for_span, fill=color_rgb)
-
                  except Exception as drawing_e:
                      logger.error(f"Error drawing text segment '{corrected_segment_for_span}': {drawing_e}")
-                     # Continue to the next span if drawing fails for one
                      pass
 
                  original_char_pos_for_drawing += original_span_length
