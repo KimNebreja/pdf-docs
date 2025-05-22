@@ -720,34 +720,31 @@ def apply_proofread_text(original_text, proofread_text, selected_suggestions=Non
         logger.error(f"Error applying proofread text: {str(e)}")
         raise
 
-def save_text_to_pdf(text, pdf_path, original_pdf_path):
+def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=None, selected_suggestions=None):
     """
-    Saves proofread text to a new PDF file with true full justification using ReportLab, matches the placement of images from the uploaded file, paginates correctly, and preserves newlines.
+    Saves proofread text to a new PDF file, preserving the original layout and formatting, and applying proofreading and suggestions.
     """
     try:
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
-        from reportlab.lib.styles import ParagraphStyle
-        from reportlab.lib.enums import TA_JUSTIFY
-        from reportlab.lib.colors import Color
+        from reportlab.pdfgen import canvas as rl_canvas
         from reportlab.lib.pagesizes import letter
         import tempfile
         register_fonts()
-        doc_template = SimpleDocTemplate(
-            pdf_path,
-            pagesize=letter,
-            leftMargin=72, rightMargin=72, topMargin=72, bottomMargin=72
-        )
-        page_width, page_height = letter
-
-        # Extract images and their positions from the original PDF using PyMuPDF
+        # Open the original PDF to extract layout and images
         doc = fitz.open(original_pdf_path)
-        images_by_page = {}
-        text_by_page = []
+        # Prepare proofread text mapping
+        if proofread_text_content is not None:
+            with open(original_pdf_path, 'rb') as f:
+                original_text = "\n".join([page.get_text() for page in doc])
+            text_mapping = apply_proofread_text(original_text, proofread_text_content, selected_suggestions)
+        else:
+            text_mapping = None
+        # Create a new PDF
+        c = rl_canvas.Canvas(pdf_path, pagesize=letter)
+        page_width, page_height = letter
         for page_num in range(len(doc)):
             mupdf_page = doc[page_num]
-            # Extract images
+            # Draw images at their original positions
             image_list = mupdf_page.get_images(full=True)
-            images = []
             for img in image_list:
                 xref = img[0]
                 base_image = doc.extract_image(xref)
@@ -757,54 +754,46 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 temp_img = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{image_ext}')
                 temp_img.write(image_bytes)
                 temp_img.close()
-                images.append({
-                    'path': temp_img.name,
-                    'bbox': bbox,
-                })
-            images_by_page[page_num] = images
-            # Extract text with formatting (for now, just get text; can expand to html/spans for more formatting)
-            page_text = mupdf_page.get_text("text")  # or "html" for more formatting
-            text_by_page.append(page_text)
+                x0, y0, x1, y1 = bbox
+                img_width = x1 - x0
+                img_height = y1 - y0
+                y0_rl = page_height - y1
+                try:
+                    c.drawImage(temp_img.name, x0, y0_rl, width=img_width, height=img_height)
+                except Exception as e:
+                    logger.warning(f"Could not draw image at ({x0},{y0_rl}): {e}")
+            # Draw text at original positions, applying proofreading/suggestions
+            blocks = mupdf_page.get_text("dict")["blocks"]
+            for block in blocks:
+                if "lines" in block:
+                    for line in block["lines"]:
+                        if "spans" in line:
+                            for span in line["spans"]:
+                                original_span_text = span["text"]
+                                bbox = span["bbox"]
+                                x, y = bbox[0], page_height - bbox[1]  # y is from bottom in ReportLab
+                                font_name = get_font_name(span.get("font", "Helvetica"))
+                                font_size = span.get("size", 11)
+                                c.setFont(font_name, font_size)
+                                # Apply proofread/suggestion if available
+                                draw_text = original_span_text
+                                if text_mapping is not None:
+                                    span_start = original_text.find(original_span_text)
+                                    if span_start != -1:
+                                        for pos, mapping in sorted(text_mapping.items()):
+                                            if span_start <= pos < span_start + len(original_span_text):
+                                                rel_pos = pos - span_start
+                                                draw_text = (
+                                                    draw_text[:rel_pos] +
+                                                    mapping['proofread'] +
+                                                    draw_text[rel_pos + mapping['length']:]
+                                                )
+                                c.drawString(x, y, draw_text)
+            if page_num < len(doc) - 1:
+                c.showPage()
+        c.save()
         doc.close()
-
-        story = []
-        for page_num, page_text in enumerate(text_by_page):
-            # Replace newlines with <br/> for ReportLab Paragraph
-            para_text = page_text.replace('\n', '<br/>')
-            style = ParagraphStyle(
-                name='Justified',
-                fontName='Helvetica',
-                fontSize=12,
-                leading=14,
-                textColor=Color(0, 0, 0),
-                alignment=TA_JUSTIFY,
-                spaceAfter=8,
-                spaceBefore=0,
-                leftIndent=0,
-                rightIndent=0,
-            )
-            para_obj = Paragraph(para_text, style)
-            story.append(para_obj)
-            story.append(Spacer(1, 8))
-            if page_num < len(text_by_page) - 1:
-                story.append(PageBreak())
-
-        def draw_images_on_page(canvas, doc):
-            page_num = doc.page - 1
-            if page_num in images_by_page:
-                for img in images_by_page[page_num]:
-                    bbox = img['bbox']
-                    x0, y0, x1, y1 = bbox
-                    img_width = x1 - x0
-                    img_height = y1 - y0
-                    y0_rl = page_height - y1
-                    try:
-                        canvas.drawImage(img['path'], x0, y0_rl, width=img_width, height=img_height)
-                    except Exception as e:
-                        logger.warning(f"Could not draw image at ({x0},{y0_rl}): {e}")
-
-        doc_template.build(story, onFirstPage=draw_images_on_page, onLaterPages=draw_images_on_page)
-        logger.info("PDF saved successfully with full justification, image placement matched, and pagination.")
+        logger.info("PDF saved successfully with original layout, formatting, and proofread text applied.")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
