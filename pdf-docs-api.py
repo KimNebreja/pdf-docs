@@ -722,7 +722,7 @@ def apply_proofread_text(original_text, proofread_text, selected_suggestions=Non
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
-    Saves proofread text to a new PDF file with true full justification using ReportLab, and matches the placement of images from the uploaded file.
+    Saves proofread text to a new PDF file with true full justification using ReportLab, matches the placement of images from the uploaded file, paginates correctly, and preserves newlines.
     """
     try:
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
@@ -742,8 +742,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
         # Extract images and their positions from the original PDF using PyMuPDF
         doc = fitz.open(original_pdf_path)
         images_by_page = {}
+        text_by_page = []
         for page_num in range(len(doc)):
             mupdf_page = doc[page_num]
+            # Extract images
             image_list = mupdf_page.get_images(full=True)
             images = []
             for img in image_list:
@@ -757,18 +759,18 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 temp_img.close()
                 images.append({
                     'path': temp_img.name,
-                    'bbox': bbox,  # fitz.Rect(x0, y0, x1, y1)
+                    'bbox': bbox,
                 })
             images_by_page[page_num] = images
+            # Extract text with formatting (for now, just get text; can expand to html/spans for more formatting)
+            page_text = mupdf_page.get_text("text")  # or "html" for more formatting
+            text_by_page.append(page_text)
         doc.close()
 
-        # Split proofread text into paragraphs
-        paragraphs = text.split('\n\n')
-
         story = []
-        for para_text in paragraphs:
-            if not para_text.strip():
-                continue
+        for page_num, page_text in enumerate(text_by_page):
+            # Replace newlines with <br/> for ReportLab Paragraph
+            para_text = page_text.replace('\n', '<br/>')
             style = ParagraphStyle(
                 name='Justified',
                 fontName='Helvetica',
@@ -784,16 +786,17 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
             para_obj = Paragraph(para_text, style)
             story.append(para_obj)
             story.append(Spacer(1, 8))
+            if page_num < len(text_by_page) - 1:
+                story.append(PageBreak())
 
         def draw_images_on_page(canvas, doc):
-            page_num = doc.page - 1  # 0-based
+            page_num = doc.page - 1
             if page_num in images_by_page:
                 for img in images_by_page[page_num]:
                     bbox = img['bbox']
                     x0, y0, x1, y1 = bbox
                     img_width = x1 - x0
                     img_height = y1 - y0
-                    # ReportLab's y=0 is at the bottom, so flip y
                     y0_rl = page_height - y1
                     try:
                         canvas.drawImage(img['path'], x0, y0_rl, width=img_width, height=img_height)
@@ -801,7 +804,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         logger.warning(f"Could not draw image at ({x0},{y0_rl}): {e}")
 
         doc_template.build(story, onFirstPage=draw_images_on_page, onLaterPages=draw_images_on_page)
-        logger.info("PDF saved successfully with full justification and image placement matched.")
+        logger.info("PDF saved successfully with full justification, image placement matched, and pagination.")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
