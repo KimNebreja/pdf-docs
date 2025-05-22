@@ -712,21 +712,48 @@ def extract_text_with_formatting(pdf_path):
                     }
                     
                     # Calculate line spacing
+                    line_obj['line_spacing'] = 0 # Default to 0
                     if len(sorted_lines) > 1:
                         current_idx = sorted_lines.index((y_pos, line_words))
                         if current_idx > 0:
-                            prev_y = sorted_lines[current_idx - 1][0]
-                            line_obj['line_spacing'] = y_pos - prev_y
+                            # Calculate space from the bottom of the previous line to the top of the current line
+                            prev_line_words = sorted_lines[current_idx - 1][1]
+                            if prev_line_words:
+                                prev_bottom = max(w['bottom'] for w in prev_line_words)
+                                current_top = min(w['top'] for w in line_words)
+                                line_obj['line_spacing'] = current_top - prev_bottom
                     
                     # Determine alignment
+                    alignment = 'left' # Default alignment
                     if line_words:
-                        left_margin = min(w['x0'] for w in line_words)
-                        right_margin = page.width - max(w['x1'] for w in line_words)
-                        if abs(left_margin - right_margin) < 10:  # If margins are roughly equal
-                            line_obj['alignment'] = 'center'
-                        elif right_margin < left_margin:
-                            line_obj['alignment'] = 'right'
+                        page_width = page.width
+                        text_width = sum(w['width'] for w in line_words) + sum(line_words[i+1]['x0'] - (line_words[i]['x0'] + line_words[i]['width']) for i in range(len(line_words)-1))
+                        line_x0 = min(w['x0'] for w in line_words)
+                        line_x1 = max(w['x1'] for w in line_words)
+                        
+                        # Simple check for centered text: left margin approx equals right margin
+                        left_margin = line_x0
+                        right_margin = page_width - line_x1
+                        
+                        if abs(left_margin - right_margin) < 10: # Tolerance for centering
+                            alignment = 'center'
+                        # Check for right alignment: right margin is small and left margin is large
+                        elif right_margin < 10 and left_margin > page_width * 0.1: # Tolerance and threshold for right alignment
+                             alignment = 'right'
+                        # Check for justified text (if text fills most of the line width)
+                        elif text_width > page_width * 0.8: # If text fills more than 80% of the line width
+                             alignment = 'justify'
+                        
+                    line_obj['alignment'] = alignment
                     
+                    # Calculate indentation and right margin relative to the page content area
+                    # Assuming content area roughly within margins (e.g., 72 points)
+                    content_x0 = 72 # Example left margin
+                    content_x1 = page_width - 72 # Example right margin
+                    
+                    line_obj['indentation'] = line_x0 - content_x0
+                    line_obj['right_margin'] = content_x1 - line_x1
+
                     # Check if this line is part of a table
                     for table in tables:
                         if (table['bbox'][1] <= y_pos <= table['bbox'][3] and
