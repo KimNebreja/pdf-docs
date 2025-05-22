@@ -19,7 +19,7 @@ import json
 import numpy as np
 from collections import defaultdict
 import difflib
-from reportlab.lib.enums import TA_JUSTIFY
+from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT, TA_CENTER, TA_RIGHT
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -829,13 +829,25 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
+                    
+                    # Detect alignment for the paragraph
+                    alignment = detect_text_alignment(pdf.pages[para_lines[0]['page']], para_lines[0]['words'])
+                    
+                    # Map alignment to ReportLab alignment constants
+                    alignment_map = {
+                        'LEFT': TA_LEFT,
+                        'CENTER': TA_CENTER,
+                        'RIGHT': TA_RIGHT,
+                        'JUSTIFY': TA_JUSTIFY
+                    }
+                    
                     style = ParagraphStyle(
-                        name='Justified',
+                        name='Custom',
                         fontName=font_name,
                         fontSize=font_size,
                         leading=font_size * 1.2,
                         textColor=Color(r, g, b),
-                        alignment=TA_JUSTIFY,
+                        alignment=alignment_map.get(alignment, TA_LEFT),
                         spaceAfter=font_size * 0.5,
                         spaceBefore=0,
                         leftIndent=0,
@@ -856,6 +868,59 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
+
+def detect_text_alignment(page, line_words):
+    """
+    Detects text alignment for a line of text.
+    Returns one of: 'LEFT', 'CENTER', 'RIGHT', 'JUSTIFY'
+    """
+    try:
+        if not line_words:
+            return 'LEFT'  # Default to left alignment
+            
+        # Get page width
+        page_width = page.width
+        
+        # Calculate line width and position
+        line_start = line_words[0]['x0']
+        line_end = line_words[-1]['x0'] + line_words[-1]['width']
+        line_width = line_end - line_start
+        
+        # Calculate margins (assuming standard margins)
+        left_margin = 72  # 1 inch in points
+        right_margin = page_width - 72
+        
+        # Calculate available width
+        available_width = right_margin - left_margin
+        
+        # Check for justification by looking at word spacing
+        if len(line_words) > 1:
+            total_gap = 0
+            for i in range(len(line_words) - 1):
+                gap = line_words[i+1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
+                total_gap += gap
+            avg_gap = total_gap / (len(line_words) - 1)
+            
+            # If gaps are relatively uniform and line is close to full width, it's justified
+            if abs(line_width - available_width) < 20 and avg_gap > 5:
+                return 'JUSTIFY'
+        
+        # Check for center alignment
+        center_point = (left_margin + right_margin) / 2
+        line_center = (line_start + line_end) / 2
+        if abs(line_center - center_point) < 20:
+            return 'CENTER'
+            
+        # Check for right alignment
+        if abs(line_end - right_margin) < 20:
+            return 'RIGHT'
+            
+        # Default to left alignment
+        return 'LEFT'
+        
+    except Exception as e:
+        logger.warning(f"Error detecting text alignment: {str(e)}")
+        return 'LEFT'  # Default to left alignment on error
 
 @app.route('/convert', methods=['POST'])
 def convert_and_proofread():
