@@ -722,25 +722,47 @@ def apply_proofread_text(original_text, proofread_text, selected_suggestions=Non
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=None, selected_suggestions=None):
     """
-    Saves proofread text to a new PDF file, preserving the original layout and formatting, and applying proofreading and suggestions.
+    Saves proofread text to a new PDF file, preserving the original layout and formatting, and applying proofreading and suggestions span-by-span.
     """
     try:
         from reportlab.pdfgen import canvas as rl_canvas
         from reportlab.lib.pagesizes import letter
         import tempfile
+        import difflib
         register_fonts()
         # Open the original PDF to extract layout and images
         doc = fitz.open(original_pdf_path)
-        # Prepare proofread text mapping
-        if proofread_text_content is not None:
-            with open(original_pdf_path, 'rb') as f:
-                original_text = "\n".join([page.get_text() for page in doc])
-            text_mapping = apply_proofread_text(original_text, proofread_text_content, selected_suggestions)
-        else:
-            text_mapping = None
+        # Build a list of all original spans (in order)
+        all_original_spans = []
+        all_span_meta = []  # To keep meta info for drawing
+        for page_num in range(len(doc)):
+            mupdf_page = doc[page_num]
+            blocks = mupdf_page.get_text("dict")["blocks"]
+            for block in blocks:
+                if "lines" in block:
+                    for line in block["lines"]:
+                        if "spans" in line:
+                            for span in line["spans"]:
+                                all_original_spans.append(span["text"])
+                                all_span_meta.append((page_num, span))
+        # Split proofread text into spans (by whitespace or line, depending on your proofreader output)
+        # Here, we use whitespace split for best match
+        proofread_spans = text.split()
+        original_spans_flat = ' '.join(all_original_spans).split()
+        # Use difflib to align
+        sm = difflib.SequenceMatcher(None, original_spans_flat, proofread_spans)
+        aligned_spans = []
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == 'equal':
+                aligned_spans.extend(proofread_spans[j1:j2])
+            elif tag in ('replace', 'insert'):
+                aligned_spans.extend(proofread_spans[j1:j2])
+            elif tag == 'delete':
+                continue
         # Create a new PDF
         c = rl_canvas.Canvas(pdf_path, pagesize=letter)
         page_width, page_height = letter
+        span_word_idx = 0
         for page_num in range(len(doc)):
             mupdf_page = doc[page_num]
             # Draw images at their original positions
@@ -762,38 +784,30 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                     c.drawImage(temp_img.name, x0, y0_rl, width=img_width, height=img_height)
                 except Exception as e:
                     logger.warning(f"Could not draw image at ({x0},{y0_rl}): {e}")
-            # Draw text at original positions, applying proofreading/suggestions
+            # Draw text at original positions, using aligned proofread spans
             blocks = mupdf_page.get_text("dict")["blocks"]
             for block in blocks:
                 if "lines" in block:
                     for line in block["lines"]:
                         if "spans" in line:
                             for span in line["spans"]:
-                                original_span_text = span["text"]
                                 bbox = span["bbox"]
-                                x, y = bbox[0], page_height - bbox[1]  # y is from bottom in ReportLab
+                                x, y = bbox[0], page_height - bbox[1]
                                 font_name = get_font_name(span.get("font", "Helvetica"))
                                 font_size = span.get("size", 11)
                                 c.setFont(font_name, font_size)
-                                # Apply proofread/suggestion if available
-                                draw_text = original_span_text
-                                if text_mapping is not None:
-                                    span_start = original_text.find(original_span_text)
-                                    if span_start != -1:
-                                        for pos, mapping in sorted(text_mapping.items()):
-                                            if span_start <= pos < span_start + len(original_span_text):
-                                                rel_pos = pos - span_start
-                                                draw_text = (
-                                                    draw_text[:rel_pos] +
-                                                    mapping['proofread'] +
-                                                    draw_text[rel_pos + mapping['length']:]
-                                                )
+                                # Use aligned proofread span if available
+                                original_words = span["text"].split()
+                                n_words = len(original_words)
+                                draw_words = aligned_spans[span_word_idx:span_word_idx + n_words]
+                                draw_text = ' '.join(draw_words) if draw_words else span["text"]
+                                span_word_idx += n_words
                                 c.drawString(x, y, draw_text)
             if page_num < len(doc) - 1:
                 c.showPage()
         c.save()
         doc.close()
-        logger.info("PDF saved successfully with original layout, formatting, and proofread text applied.")
+        logger.info("PDF saved successfully with original layout, formatting, and proofread text applied (span-by-span).")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
