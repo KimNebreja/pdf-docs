@@ -19,7 +19,7 @@ import json
 import numpy as np
 from collections import defaultdict
 import difflib
-from reportlab.lib.enums import TA_JUSTIFY
+from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT, TA_CENTER, TA_RIGHT
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -674,7 +674,7 @@ def extract_text_with_formatting(pdf_path):
                     keep_blank_chars=True,
                     x_tolerance=3,
                     y_tolerance=3,
-                    extra_attrs=['fontname', 'size', 'upright']
+                    extra_attrs=['fontname', 'size', 'upright', 'top', 'bottom', 'x0', 'x1', 'y0', 'y1', 'width', 'height', 'upright', 'direction', 'text']
                 )
                 
                 # Group words into lines based on y-position
@@ -702,8 +702,30 @@ def extract_text_with_formatting(pdf_path):
                         'is_table': False,
                         'is_column': False,
                         'is_header': False,
-                        'is_footer': False
+                        'is_footer': False,
+                        'line_height': max(w['height'] for w in line_words) if line_words else 0,
+                        'line_width': sum(w['width'] for w in line_words) if line_words else 0,
+                        'line_spacing': 0,  # Will be calculated later
+                        'alignment': 'left',  # Default alignment
+                        'indentation': min(w['x0'] for w in line_words) if line_words else 0,
+                        'right_margin': page.width - max(w['x1'] for w in line_words) if line_words else 0
                     }
+                    
+                    # Calculate line spacing
+                    if len(sorted_lines) > 1:
+                        current_idx = sorted_lines.index((y_pos, line_words))
+                        if current_idx > 0:
+                            prev_y = sorted_lines[current_idx - 1][0]
+                            line_obj['line_spacing'] = y_pos - prev_y
+                    
+                    # Determine alignment
+                    if line_words:
+                        left_margin = min(w['x0'] for w in line_words)
+                        right_margin = page.width - max(w['x1'] for w in line_words)
+                        if abs(left_margin - right_margin) < 10:  # If margins are roughly equal
+                            line_obj['alignment'] = 'center'
+                        elif right_margin < left_margin:
+                            line_obj['alignment'] = 'right'
                     
                     # Check if this line is part of a table
                     for table in tables:
@@ -711,6 +733,10 @@ def extract_text_with_formatting(pdf_path):
                             table['bbox'][0] <= line_words[0]['x0'] <= table['bbox'][2]):
                             line_obj['is_table'] = True
                             line_obj['table_data'] = table['data']
+                            line_obj['table_position'] = {
+                                'row': int((y_pos - table['bbox'][1]) / (table['bbox'][3] - table['bbox'][1]) * table['rows']),
+                                'col': int((line_words[0]['x0'] - table['bbox'][0]) / (table['bbox'][2] - table['bbox'][0]) * table['cols'])
+                            }
                             break
                             
                     # Check if this line is part of a column
@@ -719,6 +745,11 @@ def extract_text_with_formatting(pdf_path):
                             column['x0'] <= line_words[0]['x0'] <= column['x1']):
                             line_obj['is_column'] = True
                             line_obj['column'] = column
+                            line_obj['column_position'] = {
+                                'x0': column['x0'],
+                                'x1': column['x1'],
+                                'width': column['width']
+                            }
                             break
                             
                     # Check if this line is a header
@@ -726,6 +757,7 @@ def extract_text_with_formatting(pdf_path):
                         if (header['region'][1] <= y_pos <= header['region'][3] and
                             header['region'][0] <= line_words[0]['x0'] <= header['region'][2]):
                             line_obj['is_header'] = True
+                            line_obj['header_text'] = header['text']
                             break
                             
                     # Check if this line is a footer
@@ -733,6 +765,7 @@ def extract_text_with_formatting(pdf_path):
                         if (footer['region'][1] <= y_pos <= footer['region'][3] and
                             footer['region'][0] <= line_words[0]['x0'] <= footer['region'][2]):
                             line_obj['is_footer'] = True
+                            line_obj['footer_text'] = footer['text']
                             break
                             
                     result.append(line_obj)
@@ -749,6 +782,8 @@ def extract_text_with_formatting(pdf_path):
             for i, paragraph in enumerate(paragraphs):
                 if line in paragraph['lines']:
                     line['paragraph_index'] = i
+                    line['paragraph_spacing'] = paragraph.get('spacing', 0)
+                    line['paragraph_indentation'] = paragraph.get('indentation', 0)
                     break
                     
             # Find which list this line belongs to
@@ -757,6 +792,8 @@ def extract_text_with_formatting(pdf_path):
                     if line['line_index'] == item['line_index']:
                         line['list_index'] = i
                         line['list_type'] = list_obj['type']
+                        line['list_indentation'] = item['indentation']
+                        line['list_marker'] = item.get('marker', '')
                         break
                         
         return result
@@ -829,27 +866,104 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
+                    
+                    # Get alignment from the first line
+                    alignment = para_lines[0].get('alignment', 'left')
+                    alignment_map = {
+                        'left': TA_LEFT,
+                        'center': TA_CENTER,
+                        'right': TA_RIGHT,
+                        'justify': TA_JUSTIFY
+                    }
+                    
+                    # Get indentation and spacing
+                    left_indent = para_lines[0].get('indentation', 0)
+                    right_indent = para_lines[0].get('right_margin', 0)
+                    space_before = para_lines[0].get('paragraph_spacing', 0)
+                    space_after = para_lines[0].get('line_spacing', 0)
+                    
+                    # Create paragraph style with all formatting
                     style = ParagraphStyle(
-                        name='Justified',
+                        name='Custom',
                         fontName=font_name,
                         fontSize=font_size,
                         leading=font_size * 1.2,
                         textColor=Color(r, g, b),
-                        alignment=TA_JUSTIFY,
-                        spaceAfter=font_size * 0.5,
-                        spaceBefore=0,
-                        leftIndent=0,
-                        rightIndent=0,
+                        alignment=alignment_map.get(alignment, TA_JUSTIFY),
+                        spaceAfter=space_after,
+                        spaceBefore=space_before,
+                        leftIndent=left_indent,
+                        rightIndent=right_indent,
+                        firstLineIndent=0,  # Will be set if this is a list
+                        bulletIndent=0,     # Will be set if this is a list
                     )
+                    
+                    # Handle lists
+                    if any('list_index' in line for line in para_lines):
+                        list_line = next(line for line in para_lines if 'list_index' in line)
+                        list_type = list_line.get('list_type', 'bullet')
+                        list_indent = list_line.get('list_indentation', 0)
+                        list_marker = list_line.get('list_marker', '•')
+                        
+                        if list_type == 'bullet':
+                            style.firstLineIndent = list_indent
+                            style.bulletIndent = list_indent
+                            para_text = f"{list_marker} {para_text}"
+                        elif list_type == 'numbered':
+                            style.firstLineIndent = list_indent
+                            style.bulletIndent = list_indent
+                            # Get the list item number from the original text
+                            list_index = list_line.get('list_index', 0)
+                            para_text = f"{list_index + 1}. {para_text}"
+                    
+                    # Handle tables
+                    if any(line.get('is_table') for line in para_lines):
+                        table_line = next(line for line in para_lines if line.get('is_table'))
+                        table_data = table_line.get('table_data', [])
+                        table_pos = table_line.get('table_position', {})
+                        
+                        # Create table with preserved formatting
+                        table = Table(table_data)
+                        table.setStyle(TableStyle([
+                            ('ALIGN', (0, 0), (-1, -1), alignment),
+                            ('FONTNAME', (0, 0), (-1, -1), font_name),
+                            ('FONTSIZE', (0, 0), (-1, -1), font_size),
+                            ('TEXTCOLOR', (0, 0), (-1, -1), Color(r, g, b)),
+                            ('GRID', (0, 0), (-1, -1), 0.5, Color(0.5, 0.5, 0.5)),
+                            ('BACKGROUND', (0, 0), (-1, 0), Color(0.9, 0.9, 0.9)),
+                            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+                            ('TOPPADDING', (0, 0), (-1, -1), 3),
+                            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                        ]))
+                        story.append(table)
+                        continue
+                    
+                    # Handle headers and footers
+                    if any(line.get('is_header') for line in para_lines):
+                        header_line = next(line for line in para_lines if line.get('is_header'))
+                        header_text = header_line.get('header_text', '')
+                        style.fontSize = max(style.fontSize, 12)  # Ensure header is at least 12pt
+                        para_text = header_text
+                    
+                    if any(line.get('is_footer') for line in para_lines):
+                        footer_line = next(line for line in para_lines if line.get('is_footer'))
+                        footer_text = footer_line.get('footer_text', '')
+                        style.fontSize = max(style.fontSize, 10)  # Ensure footer is at least 10pt
+                        para_text = footer_text
+                    
                     para_obj = Paragraph(para_text, style)
                     story.append(para_obj)
-                    story.append(Spacer(1, font_size * 0.5))
+                    story.append(Spacer(1, space_after))
+                
                 # Add a page break after each page except the last
                 if page_idx < len(page_numbers) - 1:
                     story.append(PageBreak())
+            
             def add_page_number(canvas, doc):
                 canvas.setFont('Helvetica', 10)
                 canvas.drawString(page_width/2, 30, str(doc.page))
+            
             doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
             doc.close()
             logger.info("PDF saved successfully with original formatting")
