@@ -790,14 +790,26 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                                                 )
                                         
                                         # Insert the proofread text with the same formatting
-                                        new_page.insert_text(
-                                            bbox.tl,  # Top-left point of the original text
-                                            proofread_span,
-                                            fontname=span.get("font", "Helvetica"),
-                                            fontsize=span.get("size", 11),
-                                            color=span.get("color", 0),
-                                            render_mode=span.get("render_mode", 0)
-                                        )
+                                        font_name = get_font_name(span.get("font", "Helvetica"))
+                                        try:
+                                            new_page.insert_text(
+                                                bbox.tl,  # Top-left point of the original text
+                                                proofread_span,
+                                                fontname=font_name,
+                                                fontsize=span.get("size", 11),
+                                                color=span.get("color", 0),
+                                                render_mode=span.get("render_mode", 0)
+                                            )
+                                        except Exception as e:
+                                            logger.warning(f"Font error with '{font_name}', falling back to Helvetica: {e}")
+                                            new_page.insert_text(
+                                                bbox.tl,
+                                                proofread_span,
+                                                fontname="Helvetica",
+                                                fontsize=span.get("size", 11),
+                                                color=span.get("color", 0),
+                                                render_mode=span.get("render_mode", 0)
+                                            )
             
             # Copy any other elements (like annotations, links, etc.)
             for annot in original_page.annots():
