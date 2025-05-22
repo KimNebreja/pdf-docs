@@ -722,7 +722,7 @@ def apply_proofread_text(original_text, proofread_text, selected_suggestions=Non
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=None, selected_suggestions=None):
     """
-    Saves proofread text to a new PDF file, preserving the original layout and formatting, and applying proofreading and suggestions span-by-span. Matches the alignment of each line to the original PDF.
+    Saves proofread text to a new PDF file, preserving the original layout and formatting, and applying proofreading and suggestions span-by-span. Draws each span at its original (x, y) position to perfectly match the original alignment and spacing.
     """
     try:
         from reportlab.pdfgen import canvas as rl_canvas
@@ -786,64 +786,24 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                 if "lines" in block:
                     for line in block["lines"]:
                         if "spans" in line:
-                            # Gather all span info for this line
-                            line_spans = line["spans"]
-                            # Calculate line alignment
-                            x0s = [span["bbox"][0] for span in line_spans]
-                            x1s = [span["bbox"][2] for span in line_spans]
-                            line_x0 = min(x0s)
-                            line_x1 = max(x1s)
-                            margin_tol = 10  # tolerance for margin detection
-                            is_left = abs(line_x0 - 0) < margin_tol
-                            is_right = abs(line_x1 - page_width) < margin_tol
-                            is_justified = is_left and is_right
-                            is_center = not is_left and not is_right
-                            # Prepare the full line text from aligned spans
-                            line_words = []
-                            for span in line_spans:
+                            for span in line["spans"]:
+                                bbox = span["bbox"]
+                                x, y = bbox[0], page_height - bbox[1]
+                                font_name = get_font_name(span.get("font", "Helvetica"))
+                                font_size = span.get("size", 11)
+                                c.setFont(font_name, font_size)
+                                # Use aligned proofread span if available
                                 original_words = span["text"].split()
                                 n_words = len(original_words)
                                 draw_words = aligned_spans[span_word_idx:span_word_idx + n_words]
-                                line_words.extend(draw_words if draw_words else original_words)
+                                draw_text = ' '.join(draw_words) if draw_words else span["text"]
                                 span_word_idx += n_words
-                            line_text = ' '.join(line_words)
-                            # Calculate y position (use first span's y)
-                            y = page_height - line_spans[0]["bbox"][1]
-                            font_name = get_font_name(line_spans[0].get("font", "Helvetica"))
-                            font_size = line_spans[0].get("size", 11)
-                            c.setFont(font_name, font_size)
-                            # Calculate text width
-                            text_width = c.stringWidth(line_text, font_name, font_size)
-                            # Draw with alignment
-                            if is_justified and len(line_words) > 1:
-                                # Distribute extra space between words
-                                available_width = line_x1 - line_x0
-                                total_word_width = sum([c.stringWidth(w, font_name, font_size) for w in line_words])
-                                n_spaces = len(line_words) - 1
-                                if n_spaces > 0:
-                                    extra_space = (available_width - total_word_width) / n_spaces
-                                else:
-                                    extra_space = 0
-                                x = line_x0
-                                for i, word in enumerate(line_words):
-                                    c.drawString(x, y, word)
-                                    word_width = c.stringWidth(word, font_name, font_size)
-                                    if i < n_spaces:
-                                        x += word_width + extra_space
-                            elif is_center:
-                                x = line_x0 + (line_x1 - line_x0 - text_width) / 2
-                                c.drawString(x, y, line_text)
-                            elif is_right:
-                                x = line_x1 - text_width
-                                c.drawString(x, y, line_text)
-                            else:  # left
-                                x = line_x0
-                                c.drawString(x, y, line_text)
+                                c.drawString(x, y, draw_text)
             if page_num < len(doc) - 1:
                 c.showPage()
         c.save()
         doc.close()
-        logger.info("PDF saved successfully with original layout, formatting, proofread/suggestion text, and matched alignment.")
+        logger.info("PDF saved successfully with original layout, formatting, proofread/suggestion text, and exact alignment.")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
