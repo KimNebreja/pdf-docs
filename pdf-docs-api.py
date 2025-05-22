@@ -876,7 +876,7 @@ def detect_text_alignment(page, line_words):
     """
     try:
         if not line_words:
-            return 'LEFT'  # Default to left alignment
+            return 'JUSTIFY'  # Default to justified alignment
             
         # Get page width
         page_width = page.width
@@ -980,12 +980,12 @@ def detect_text_alignment(page, line_words):
             logger.debug("Detected as justified text based on final fallback")
             return 'JUSTIFY'
             
-        # Default to left alignment
-        return 'LEFT'
+        # Default to justified alignment
+        return 'JUSTIFY'
         
     except Exception as e:
         logger.warning(f"Error detecting text alignment: {str(e)}")
-        return 'LEFT'  # Default to left alignment on error
+        return 'JUSTIFY'  # Default to justified alignment on error
 
 @app.route('/convert', methods=['POST'])
 def convert_and_proofread():
