@@ -674,7 +674,7 @@ def extract_text_with_formatting(pdf_path):
                     keep_blank_chars=True,
                     x_tolerance=3,
                     y_tolerance=3,
-                    extra_attrs=['fontname', 'size', 'upright', 'top', 'bottom', 'x0', 'x1', 'y0', 'y1', 'width', 'height', 'upright', 'direction', 'text']
+                    extra_attrs=['fontname', 'size', 'upright', 'top', 'bottom', 'x0', 'x1', 'y0', 'y1', 'width', 'height', 'upright', 'text']
                 )
                 
                 # Group words into lines based on y-position
