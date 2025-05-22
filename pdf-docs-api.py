@@ -472,42 +472,159 @@ def normalize_color(color):
         return (0, 0, 0)  # Default to black on error
 
 def get_font_name(font_name):
-    """Normalizes font names with advanced mapping and fallback mechanism."""
+    """Normalizes font names with advanced mapping and fallback mechanism, including better weight detection."""
     if not font_name:
         return "Helvetica"  # Default font
 
     # Clean up font name
     font_name = font_name.lower().strip()
+    
+    # Extract weight information
+    is_bold = any(weight in font_name for weight in ['bold', 'heavy', 'black', 'semibold', 'demibold', 'medium'])
+    is_italic = any(style in font_name for style in ['italic', 'oblique', 'slanted'])
+    
+    # Remove weight/style indicators for base font matching
+    base_font = font_name
+    for indicator in ['bold', 'heavy', 'black', 'semibold', 'demibold', 'medium', 'italic', 'oblique', 'slanted', 'regular', 'normal']:
+        base_font = base_font.replace(indicator, '').strip('-').strip()
 
-    # Map common font names (add more as needed)
+    # Map common font names with better weight/style handling
     font_map = {
-        "helvetica": "Helvetica",
-        "arial": "Helvetica",
-        "arial-bold": "Helvetica-Bold",
-        "arialitalic": "Helvetica-Oblique",
-        "arial-bolditalic": "Helvetica-BoldOblique",
-        "calibri": "Calibri",
-        "calibri-bold": "Calibri-Bold",
-        "calibri-italic": "Calibri-Italic",
-        "calibri-bolditalic": "Calibri-BoldItalic",
-        "verdana": "Verdana",
-        "tahoma": "Tahoma",
-        "georgia": "Georgia",
-        "times": "Times-Roman",
-        "times new roman": "Times-Roman",
-        "times-bold": "Times-Bold",
-        "times-italic": "Times-Italic",
-        "times-bolditalic": "Times-BoldItalic",
-        "courier": "Courier",
-        "courier new": "Courier",
-        "symbol": "Symbol",
-        "zapfdingbats": "ZapfDingbats",
+        # Sans-serif fonts
+        "helvetica": {
+            "base": "Helvetica",
+            "bold": "Helvetica-Bold",
+            "italic": "Helvetica-Oblique",
+            "bolditalic": "Helvetica-BoldOblique"
+        },
+        "arial": {
+            "base": "Helvetica",
+            "bold": "Helvetica-Bold",
+            "italic": "Helvetica-Oblique",
+            "bolditalic": "Helvetica-BoldOblique"
+        },
+        "calibri": {
+            "base": "Calibri",
+            "bold": "Calibri-Bold",
+            "italic": "Calibri-Italic",
+            "bolditalic": "Calibri-BoldItalic"
+        },
+        "verdana": {
+            "base": "Verdana",
+            "bold": "Verdana-Bold",
+            "italic": "Verdana-Italic",
+            "bolditalic": "Verdana-BoldItalic"
+        },
+        "tahoma": {
+            "base": "Tahoma",
+            "bold": "Tahoma-Bold",
+            "italic": "Tahoma-Italic",
+            "bolditalic": "Tahoma-BoldItalic"
+        },
+        # Serif fonts
+        "times": {
+            "base": "Times-Roman",
+            "bold": "Times-Bold",
+            "italic": "Times-Italic",
+            "bolditalic": "Times-BoldItalic"
+        },
+        "times new roman": {
+            "base": "Times-Roman",
+            "bold": "Times-Bold",
+            "italic": "Times-Italic",
+            "bolditalic": "Times-BoldItalic"
+        },
+        "georgia": {
+            "base": "Georgia",
+            "bold": "Georgia-Bold",
+            "italic": "Georgia-Italic",
+            "bolditalic": "Georgia-BoldItalic"
+        },
+        # Monospace fonts
+        "courier": {
+            "base": "Courier",
+            "bold": "Courier-Bold",
+            "italic": "Courier-Oblique",
+            "bolditalic": "Courier-BoldOblique"
+        },
+        "courier new": {
+            "base": "Courier",
+            "bold": "Courier-Bold",
+            "italic": "Courier-Oblique",
+            "bolditalic": "Courier-BoldOblique"
+        }
     }
-    for key in font_map:
-        if key in font_name:
-            return font_map[key]
-    # Fallback to Helvetica
+
+    # Find the matching font family
+    for key, variants in font_map.items():
+        if key in base_font:
+            # Determine which variant to use based on weight and style
+            if is_bold and is_italic:
+                return variants["bolditalic"]
+            elif is_bold:
+                return variants["bold"]
+            elif is_italic:
+                return variants["italic"]
+            else:
+                return variants["base"]
+
+    # Fallback to Helvetica with appropriate weight/style
+    if is_bold and is_italic:
+        return "Helvetica-BoldOblique"
+    elif is_bold:
+        return "Helvetica-Bold"
+    elif is_italic:
+        return "Helvetica-Oblique"
     return "Helvetica"
+
+def detect_font_style(span):
+    """Detects font style information from a PDF span with enhanced weight detection."""
+    try:
+        style_info = {
+            'is_bold': False,
+            'is_italic': False,
+            'weight': 'normal',
+            'style': 'normal'
+        }
+        
+        # Get font name and clean it
+        font_name = span.get('font', '').lower()
+        
+        # Check for bold indicators
+        bold_indicators = ['bold', 'heavy', 'black', 'semibold', 'demibold', 'medium']
+        for indicator in bold_indicators:
+            if indicator in font_name:
+                style_info['is_bold'] = True
+                style_info['weight'] = 'bold'
+                break
+                
+        # Check for italic indicators
+        italic_indicators = ['italic', 'oblique', 'slanted']
+        for indicator in italic_indicators:
+            if indicator in font_name:
+                style_info['is_italic'] = True
+                style_info['style'] = 'italic'
+                break
+                
+        # Additional weight detection from font metrics
+        if 'fontsize' in span and 'bbox' in span:
+            # Some fonts have different metrics for bold text
+            # This is a heuristic approach - adjust thresholds based on your needs
+            font_size = span['fontsize']
+            bbox_width = span['bbox'][2] - span['bbox'][0]
+            text_length = len(span.get('text', ''))
+            
+            if text_length > 0:
+                avg_char_width = bbox_width / text_length
+                # Bold text tends to be wider
+                if avg_char_width > (font_size * 0.6):  # Adjust threshold as needed
+                    style_info['is_bold'] = True
+                    style_info['weight'] = 'bold'
+        
+        return style_info
+    except Exception as e:
+        logger.warning(f"Error detecting font style: {str(e)}")
+        return {'is_bold': False, 'is_italic': False, 'weight': 'normal', 'style': 'normal'}
 
 def register_fonts():
     """Registers common fonts with ReportLab if available."""
@@ -722,7 +839,7 @@ def apply_proofread_text(original_text, proofread_text, selected_suggestions=Non
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=None, selected_suggestions=None):
     """
-    Saves proofread text to a new PDF file, re-justifying each line after proofreading so the line is always justified even if the text changes.
+    Saves proofread text to a new PDF file with enhanced font style preservation.
     """
     try:
         from reportlab.pdfgen import canvas as rl_canvas
@@ -730,13 +847,17 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
         import tempfile
         import difflib
         register_fonts()
+        
         # Apply selected suggestions to the proofread text before mapping spans
         if selected_suggestions:
             for original_word, selected_word in selected_suggestions.items():
                 text = text.replace(original_word, selected_word)
+                
         doc = fitz.open(original_pdf_path)
         all_original_spans = []
         all_span_meta = []
+        
+        # First pass: collect all spans and their style information
         for page_num in range(len(doc)):
             mupdf_page = doc[page_num]
             blocks = mupdf_page.get_text("dict")["blocks"]
@@ -745,12 +866,17 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                     for line in block["lines"]:
                         if "spans" in line:
                             for span in line["spans"]:
+                                # Get detailed style information
+                                style_info = detect_font_style(span)
+                                span['style_info'] = style_info
                                 all_original_spans.append(span["text"])
                                 all_span_meta.append((page_num, span))
+        
         proofread_spans = text.split()
         original_spans_flat = ' '.join(all_original_spans).split()
         sm = difflib.SequenceMatcher(None, original_spans_flat, proofread_spans)
         aligned_spans = []
+        
         for tag, i1, i2, j1, j2 in sm.get_opcodes():
             if tag == 'equal':
                 aligned_spans.extend(proofread_spans[j1:j2])
@@ -758,11 +884,15 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                 aligned_spans.extend(proofread_spans[j1:j2])
             elif tag == 'delete':
                 continue
+                
         c = rl_canvas.Canvas(pdf_path, pagesize=letter)
         page_width, page_height = letter
         span_word_idx = 0
+        
         for page_num in range(len(doc)):
             mupdf_page = doc[page_num]
+            
+            # Handle images (existing code)
             image_list = mupdf_page.get_images(full=True)
             for img in image_list:
                 xref = img[0]
@@ -781,19 +911,19 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                     c.drawImage(temp_img.name, x0, y0_rl, width=img_width, height=img_height)
                 except Exception as e:
                     logger.warning(f"Could not draw image at ({x0},{y0_rl}): {e}")
+            
+            # Process text with enhanced style handling
             blocks = mupdf_page.get_text("dict")["blocks"]
             for block in blocks:
                 if "lines" in block:
                     for line in block["lines"]:
                         if "spans" in line:
-                            # Gather all span info for this line
                             line_spans = line["spans"]
-                            # Calculate available width for justification
                             x0s = [span["bbox"][0] for span in line_spans]
                             x1s = [span["bbox"][2] for span in line_spans]
                             line_x0 = min(x0s)
                             line_x1 = max(x1s)
-                            # Prepare the full line text from aligned spans
+                            
                             line_words = []
                             for span in line_spans:
                                 original_words = span["text"].split()
@@ -801,33 +931,47 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                                 draw_words = aligned_spans[span_word_idx:span_word_idx + n_words]
                                 line_words.extend(draw_words if draw_words else original_words)
                                 span_word_idx += n_words
-                            # Calculate y position (use first span's y)
-                            y = page_height - line_spans[0]["bbox"][1]
-                            font_name = get_font_name(line_spans[0].get("font", "Helvetica"))
-                            font_size = line_spans[0].get("size", 11)
-                            c.setFont(font_name, font_size)
-                            # Calculate text width
-                            total_word_width = sum([c.stringWidth(w, font_name, font_size) for w in line_words])
-                            n_spaces = len(line_words) - 1
-                            available_width = line_x1 - line_x0
-                            if n_spaces > 0 and total_word_width < available_width:
-                                # Justify: distribute extra space between words
-                                extra_space = (available_width - total_word_width) / n_spaces
-                                x = line_x0
-                                for i, word in enumerate(line_words):
-                                    c.drawString(x, y, word)
-                                    word_width = c.stringWidth(word, font_name, font_size)
-                                    if i < n_spaces:
-                                        x += word_width + extra_space
-                            else:
-                                # Left align if only one word or no extra space
-                                x = line_x0
-                                c.drawString(x, y, ' '.join(line_words))
+                                
+                                # Get font and style information
+                                style_info = span.get('style_info', detect_font_style(span))
+                                font_name = get_font_name(span.get("font", "Helvetica"))
+                                font_size = span.get("size", 11)
+                                
+                                # Apply font with correct style
+                                if style_info['is_bold'] and style_info['is_italic']:
+                                    font_name = font_name.replace('Regular', 'BoldItalic').replace('Roman', 'BoldItalic')
+                                elif style_info['is_bold']:
+                                    font_name = font_name.replace('Regular', 'Bold').replace('Roman', 'Bold')
+                                elif style_info['is_italic']:
+                                    font_name = font_name.replace('Regular', 'Italic').replace('Roman', 'Italic')
+                                
+                                c.setFont(font_name, font_size)
+                                
+                                # Calculate text width with style consideration
+                                total_word_width = sum([c.stringWidth(w, font_name, font_size) for w in line_words])
+                                n_spaces = len(line_words) - 1
+                                available_width = line_x1 - line_x0
+                                
+                                # Draw text with justification
+                                if n_spaces > 0 and total_word_width < available_width:
+                                    extra_space = (available_width - total_word_width) / n_spaces
+                                    x = line_x0
+                                    for i, word in enumerate(line_words):
+                                        c.drawString(x, page_height - span["bbox"][1], word)
+                                        word_width = c.stringWidth(word, font_name, font_size)
+                                        if i < n_spaces:
+                                            x += word_width + extra_space
+                                else:
+                                    x = line_x0
+                                    c.drawString(x, page_height - span["bbox"][1], ' '.join(line_words))
+            
             if page_num < len(doc) - 1:
                 c.showPage()
+                
         c.save()
         doc.close()
-        logger.info("PDF saved successfully with re-justified lines after proofreading.")
+        logger.info("PDF saved successfully with enhanced font style preservation.")
+        
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
