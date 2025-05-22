@@ -841,14 +841,17 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         'JUSTIFY': TA_JUSTIFY
                     }
                     
-                    # Create paragraph style with consistent alignment
+                    # Get the alignment value, defaulting to justify if not found
+                    alignment_value = alignment_map.get(alignment, TA_JUSTIFY)
+                    
+                    # Create paragraph style with detected alignment
                     style = ParagraphStyle(
                         name=f'Custom_{page_num}_{len(story)}',  # Unique name for each paragraph
                         fontName=font_name,
                         fontSize=font_size,
                         leading=font_size * 1.2,
                         textColor=Color(r, g, b),
-                        alignment=alignment_map.get(alignment, TA_JUSTIFY),  # Default to justify if alignment not found
+                        alignment=alignment_value,  # Use detected alignment
                         spaceAfter=font_size * 0.5,
                         spaceBefore=0,
                         leftIndent=0,
@@ -862,8 +865,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         borderColor=Color(0, 0, 0),
                         borderPadding=0,
                         borderRadius=0,
-                        backColor=None,
-                        alignment=TA_JUSTIFY  # Force justify alignment for all paragraphs
+                        backColor=None
                     )
                     
                     # Create paragraph with the style
