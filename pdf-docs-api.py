@@ -896,19 +896,29 @@ def detect_text_alignment(page, line_words):
         # Check for justification by looking at word spacing
         if len(line_words) > 1:
             total_gap = 0
+            gaps = []
             for i in range(len(line_words) - 1):
                 gap = line_words[i+1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
+                gaps.append(gap)
                 total_gap += gap
             avg_gap = total_gap / (len(line_words) - 1)
             
-            # If gaps are relatively uniform and line is close to full width, it's justified
-            if abs(line_width - available_width) < 20 and avg_gap > 5:
+            # Calculate gap variance to detect justified text
+            gap_variance = sum((g - avg_gap) ** 2 for g in gaps) / len(gaps) if gaps else 0
+            
+            # If line is close to full width and has relatively uniform gaps, it's justified
+            if (abs(line_width - available_width) < 30 and  # Increased tolerance for width
+                avg_gap > 3 and  # Minimum gap threshold
+                gap_variance < 100):  # Maximum variance threshold
                 return 'JUSTIFY'
         
         # Check for center alignment
         center_point = (left_margin + right_margin) / 2
         line_center = (line_start + line_end) / 2
-        if abs(line_center - center_point) < 20:
+        
+        # More strict center alignment check
+        if (abs(line_center - center_point) < 15 and  # Reduced tolerance for center alignment
+            abs(line_width - available_width) > 50):  # Center-aligned text is usually shorter
             return 'CENTER'
             
         # Check for right alignment
