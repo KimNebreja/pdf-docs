@@ -906,11 +906,23 @@ def detect_text_alignment(page, line_words):
             # Calculate gap variance to detect justified text
             gap_variance = sum((g - avg_gap) ** 2 for g in gaps) / len(gaps) if gaps else 0
             
-            # If line is close to full width and has relatively uniform gaps, it's justified
-            if (abs(line_width - available_width) < 30 and  # Width tolerance
-                avg_gap > 3 and  # Minimum gap threshold
-                gap_variance < 100 and  # Maximum variance threshold
-                abs(line_start - left_margin) < 20):  # Check if text starts near left margin
+            # More lenient conditions for justified text
+            is_justified = (
+                # Check if line spans most of the available width
+                (abs(line_width - available_width) < 50 or  # Increased width tolerance
+                 line_width > available_width * 0.8) and  # Or at least 80% of available width
+                
+                # Check for reasonable word spacing
+                avg_gap > 2 and  # Lowered minimum gap threshold
+                
+                # Check for uniform spacing
+                gap_variance < 150 and  # Increased variance threshold
+                
+                # Check if text starts near left margin
+                abs(line_start - left_margin) < 30  # Increased left margin tolerance
+            )
+            
+            if is_justified:
                 return 'JUSTIFY'
         
         # Check for center alignment
@@ -927,6 +939,11 @@ def detect_text_alignment(page, line_words):
             abs(line_start - left_margin) > 50 and  # Text starts far from left margin
             abs(line_width - available_width) < 50):  # Text is not full width
             return 'RIGHT'
+            
+        # Check for left alignment - more strict conditions
+        if (abs(line_start - left_margin) < 20 and  # Text starts near left margin
+            abs(line_width - available_width) < 50):  # Text is not full width
+            return 'LEFT'
             
         # Default to left alignment
         return 'LEFT'
