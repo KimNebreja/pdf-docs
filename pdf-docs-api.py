@@ -19,7 +19,7 @@ import json
 import numpy as np
 from collections import defaultdict
 import difflib
-from reportlab.lib.enums import TA_JUSTIFY
+from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT, TA_CENTER, TA_RIGHT
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -338,19 +338,21 @@ def detect_paragraphs(lines):
             # Calculate vertical spacing with more precision
             if i > 0:
                 vertical_gap = line['y_pos'] - lines[i-1]['y_pos']
-                # Calculate average line height of the previous line, handle potential division by zero
+                # Calculate average line height of the previous line
                 prev_line_words = lines[i-1]['words']
                 avg_prev_line_height = sum(w['height'] for w in prev_line_words) / len(prev_line_words) if prev_line_words else 0
                 
-                # More precise paragraph break detection - slightly increased threshold for vertical gap
-                if avg_prev_line_height > 0 and vertical_gap > avg_prev_line_height * 1.5:  # Increased threshold
-                    is_new_paragraph = True
+                # More precise paragraph break detection
+                if avg_prev_line_height > 0:
+                    # Use exact spacing from original document
+                    if vertical_gap > avg_prev_line_height * 1.5:  # Increased threshold for better paragraph detection
+                        is_new_paragraph = True
                     
-                # Check for significant indentation with relative measurement
+                # Check for significant indentation
                 if line['words'] and prev_line_words:
                     current_indent = line['words'][0]['x0']
                     prev_indent = prev_line_words[0]['x0']
-                    indent_threshold = avg_prev_line_height * 0.6  # Slightly increased threshold for indentation change
+                    indent_threshold = avg_prev_line_height * 0.5  # Increased threshold for better indentation detection
                     
                     if current_indent > prev_indent + indent_threshold:
                         is_new_paragraph = True
@@ -360,75 +362,92 @@ def detect_paragraphs(lines):
                     prev_word = current_paragraph[-1]['words'][0]
                     curr_word = line['words'][0]
                     
-                    # More precise font size comparison
+                    # Exact font size comparison
                     prev_size = prev_word.get('size', 0)
                     curr_size = curr_word.get('size', 0)
-                    size_diff_threshold = min(prev_size, curr_size) * 0.1  # 10% of smaller size
+                    size_diff_threshold = min(prev_size, curr_size) * 0.1  # Increased threshold for better font size detection
                     
+                    # Check for font changes
                     if (prev_word.get('fontname') != curr_word.get('fontname') or
                         abs(prev_size - curr_size) > size_diff_threshold):
                         is_new_paragraph = True
                     
-            # If this is a new paragraph, save the current one with detailed spacing info
+                    # Check for color changes
+                    prev_color = current_paragraph[-1].get('formatting', {}).get('color')
+                    curr_color = line.get('formatting', {}).get('color')
+                    if prev_color != curr_color:
+                        is_new_paragraph = True
+                    
+            # If this is a new paragraph, save the current one with exact spacing info
             if is_new_paragraph and current_paragraph:
-                # Calculate precise spacing metrics
+                # Calculate exact spacing metrics
                 spacing_info = {
                     'before': 0,
                     'after': 0,
                     'line_spacing': [],
                     'avg_line_spacing': 0,
                     'max_line_height': 0,
-                    'min_line_height': float('inf')
+                    'min_line_height': float('inf'),
+                    'indentation': current_paragraph[0]['indentation'] if current_paragraph else 0
                 }
                 
-                # Calculate spacing before paragraph (if it's not the very first paragraph)
+                # Calculate exact spacing before paragraph
                 if len(lines) > 1 and i - len(current_paragraph) >= 0:
                     prev_line_words = lines[i - len(current_paragraph)]['words']
                     avg_prev_line_height = sum(w['height'] for w in prev_line_words) / len(prev_line_words) if prev_line_words else 0
-                    # Calculate vertical gap between the end of the previous line and the start of the current paragraph
                     vertical_gap_before = current_paragraph[0]['y_pos'] - lines[i - len(current_paragraph)]['y_pos']
-                    # Use the actual vertical gap for spacing before, fallback to calculated minimum
-                    spacing_info['before'] = max(vertical_gap_before, avg_prev_line_height * 0.8 if avg_prev_line_height > 0 else font_size * 0.8) # Use actual gap, fallback to font size factor
+                    spacing_info['before'] = vertical_gap_before
 
-                # Calculate spacing after paragraph (since it's the last paragraph, there's no line after it within the detected lines)
-                # We might want to add a default space_after here if needed for consistency, but for the last paragraph it's often zero in source PDFs
-                spacing_info['after'] = 0 # Explicitly set after spacing to 0 for the last paragraph
-
-                # Calculate line spacing within paragraph
+                # Calculate exact line spacing within paragraph
                 if len(current_paragraph) > 1:
                     for j in range(1, len(current_paragraph)):
                         line_spacing = current_paragraph[j]['y_pos'] - current_paragraph[j-1]['y_pos']
                         spacing_info['line_spacing'].append(line_spacing)
                         
-                        # Calculate line heights - handle potential division by zero
                         curr_line_words = current_paragraph[j]['words']
                         curr_line_height = sum(w['height'] for w in curr_line_words) / len(curr_line_words) if curr_line_words else 0
                         spacing_info['max_line_height'] = max(spacing_info['max_line_height'], curr_line_height)
                         spacing_info['min_line_height'] = min(spacing_info['min_line_height'], curr_line_height) if curr_line_height > 0 else spacing_info['min_line_height']
                     
-                    # Calculate average line spacing, ensure minimum based on max line height or a default factor
-                    avg_line_spacing_calculated = sum(spacing_info['line_spacing']) / len(spacing_info['line_spacing']) if spacing_info['line_spacing'] else 0
-                    spacing_info['avg_line_spacing'] = max(
-                        avg_line_spacing_calculated,
-                        spacing_info['max_line_height'] * 1.3 if spacing_info['max_line_height'] > 0 else font_size * 1.3  # Ensure minimum line spacing is slightly larger
-                    )
+                    # Calculate average line spacing
+                    spacing_info['avg_line_spacing'] = sum(spacing_info['line_spacing']) / len(spacing_info['line_spacing']) if spacing_info['line_spacing'] else 0
+                
+                # Get formatting information from the first line
+                first_line = current_paragraph[0]
+                formatting = {
+                    'font': first_line.get('formatting', {}).get('font', 'Helvetica'),
+                    'size': first_line.get('formatting', {}).get('size', 11),
+                    'color': first_line.get('formatting', {}).get('color'),
+                    'alignment': 'left'  # Default alignment
+                }
+                
+                # Determine text alignment
+                if first_line['words']:
+                    first_word = first_line['words'][0]
+                    last_word = first_line['words'][-1]
+                    line_width = last_word['x0'] + last_word['width'] - first_word['x0']
+                    page_width = first_line.get('page_width', 612)  # Default to letter width
+                    if line_width > page_width * 0.8:  # If line takes up most of the page width
+                        formatting['alignment'] = 'justify'
+                    elif first_word['x0'] > page_width * 0.4:  # If text starts in the right half
+                        formatting['alignment'] = 'right'
+                    elif first_word['x0'] < page_width * 0.2:  # If text starts in the left quarter
+                        formatting['alignment'] = 'left'
+                    else:
+                        formatting['alignment'] = 'center'
                 
                 paragraphs.append({
                     'lines': current_paragraph,
                     'text': ' '.join([l['text'] for l in current_paragraph]),
                     'spacing': spacing_info,
-                    'formatting': {
-                        'font': current_paragraph[0]['words'][0].get('fontname', 'Helvetica'),
-                        'size': current_paragraph[0]['words'][0].get('size', 11),
-                        'indent': current_paragraph[0]['words'][0]['x0'] if current_paragraph[0]['words'] else 0
-                    }
+                    'formatting': formatting
                 })
                 current_paragraph = []
                 
             # Add this line to the current paragraph
-            current_paragraph.append(line)
+            current_paragraph.append(line) # Append the original line dictionary
             
-        # Add the last paragraph with the same detailed spacing info
+        # Add the last paragraph with exact spacing info
         if current_paragraph:
             spacing_info = {
                 'before': 0,
@@ -436,48 +455,57 @@ def detect_paragraphs(lines):
                 'line_spacing': [],
                 'avg_line_spacing': 0,
                 'max_line_height': 0,
-                'min_line_height': float('inf')
+                'min_line_height': float('inf'),
+                'indentation': current_paragraph[0]['indentation'] if current_paragraph else 0
             }
             
             if len(current_paragraph) > 1:
                 prev_line_words = lines[len(current_paragraph)-2]['words']
                 avg_prev_line_height = sum(w['height'] for w in prev_line_words) / len(prev_line_words) if prev_line_words else 0
-                # Calculate vertical gap between the end of the previous line and the start of the current paragraph
                 vertical_gap_before = current_paragraph[0]['y_pos'] - lines[len(current_paragraph)-2]['y_pos']
-                # Use the actual vertical gap for spacing before, fallback to calculated minimum
-                spacing_info['before'] = max(vertical_gap_before, avg_prev_line_height * 0.8 if avg_prev_line_height > 0 else font_size * 0.8) # Use actual gap, fallback to font size factor
+                spacing_info['before'] = vertical_gap_before
 
-                # Calculate spacing after paragraph (since it's the last paragraph, there's no line after it within the detected lines)
-                # We might want to add a default space_after here if needed for consistency, but for the last paragraph it's often zero in source PDFs
-                spacing_info['after'] = 0 # Explicitly set after spacing to 0 for the last paragraph
-
-                # Calculate line spacing within paragraph
+                # Calculate exact line spacing
                 for j in range(1, len(current_paragraph)):
                     line_spacing = current_paragraph[j]['y_pos'] - current_paragraph[j-1]['y_pos']
                     spacing_info['line_spacing'].append(line_spacing)
                     
-                    # Calculate line heights - handle potential division by zero
                     curr_line_words = current_paragraph[j]['words']
                     curr_line_height = sum(w['height'] for w in curr_line_words) / len(curr_line_words) if curr_line_words else 0
                     spacing_info['max_line_height'] = max(spacing_info['max_line_height'], curr_line_height)
                     spacing_info['min_line_height'] = min(spacing_info['min_line_height'], curr_line_height) if curr_line_height > 0 else spacing_info['min_line_height']
                 
-                # Calculate average line spacing, ensure minimum based on max line height or a default factor
-                avg_line_spacing_calculated = sum(spacing_info['line_spacing']) / len(spacing_info['line_spacing']) if spacing_info['line_spacing'] else 0
-                spacing_info['avg_line_spacing'] = max(
-                    avg_line_spacing_calculated,
-                    spacing_info['max_line_height'] * 1.3 if spacing_info['max_line_height'] > 0 else font_size * 1.3  # Ensure minimum line spacing is slightly larger
-                )
+                spacing_info['avg_line_spacing'] = sum(spacing_info['line_spacing']) / len(spacing_info['line_spacing']) if spacing_info['line_spacing'] else 0
+            
+            # Get formatting information from the first line
+            first_line = current_paragraph[0]
+            formatting = {
+                'font': first_line.get('formatting', {}).get('font', 'Helvetica'),
+                'size': first_line.get('formatting', {}).get('size', 11),
+                'color': first_line.get('formatting', {}).get('color'),
+                'alignment': 'left'  # Default alignment
+            }
+            
+            # Determine text alignment
+            if first_line['words']:
+                first_word = first_line['words'][0]
+                last_word = first_line['words'][-1]
+                line_width = last_word['x0'] + last_word['width'] - first_word['x0']
+                page_width = first_line.get('page_width', 612)  # Default to letter width
+                if line_width > page_width * 0.8:  # If line takes up most of the page width
+                    formatting['alignment'] = 'justify'
+                elif first_word['x0'] > page_width * 0.4:  # If text starts in the right half
+                    formatting['alignment'] = 'right'
+                elif first_word['x0'] < page_width * 0.2:  # If text starts in the left quarter
+                    formatting['alignment'] = 'left'
+                else:
+                    formatting['alignment'] = 'center'
             
             paragraphs.append({
                 'lines': current_paragraph,
                 'text': ' '.join([l['text'] for l in current_paragraph]),
                 'spacing': spacing_info,
-                'formatting': {
-                    'font': current_paragraph[0]['words'][0].get('fontname', 'Helvetica'),
-                    'size': current_paragraph[0]['words'][0].get('size', 11),
-                    'indent': current_paragraph[0]['words'][0]['x0'] if current_paragraph[0]['words'] else 0
-                }
+                'formatting': formatting
             })
             
         return paragraphs
@@ -773,6 +801,10 @@ def extract_text_with_formatting(pdf_path):
         
         with pdfplumber.open(pdf_path) as pdf:
             for page_num, page in enumerate(pdf.pages):
+                # Get page dimensions
+                page_width = page.width
+                page_height = page.height
+                
                 # Detect tables
                 tables = detect_tables(page)
                 
@@ -784,13 +816,40 @@ def extract_text_with_formatting(pdf_path):
                     keep_blank_chars=True,
                     x_tolerance=3,
                     y_tolerance=3,
-                    extra_attrs=['fontname', 'size', 'upright']
+                    extra_attrs=['fontname', 'size', 'upright', 'top', 'bottom', 'x0', 'x1', 'y0', 'y1']
                 )
                 
-                # Group words into lines based on y-position
-                lines = {}
+                # Filter out words that are within header or footer regions
+                body_words = []
                 for word in words:
-                    y_pos = round(word['top'], 1)  # Round to 1 decimal place for grouping
+                    is_header_footer = False
+                    word_rect = fitz.Rect(word['x0'], word['top'], word['x1'], word['bottom'])
+                    
+                    # Check against header regions
+                    for header in header_footer_info['headers']:
+                        header_rect = fitz.Rect(*header['region'])
+                        if word_rect.intersects(header_rect):
+                            is_header_footer = True
+                            break
+                    
+                    if is_header_footer:
+                        continue
+                        
+                    # Check against footer regions
+                    for footer in header_footer_info['footers']:
+                        footer_rect = fitz.Rect(*footer['region'])
+                        if word_rect.intersects(footer_rect):
+                            is_header_footer = True
+                            break
+                            
+                    if not is_header_footer:
+                        body_words.append(word)
+                
+                # Group filtered words into lines based on y-position with improved tolerance
+                lines = {}
+                for word in body_words:
+                    # Use a more precise y-position grouping
+                    y_pos = round(word['top'], 2)  # Round to 2 decimal places for more precise grouping
                     if y_pos not in lines:
                         lines[y_pos] = []
                     lines[y_pos].append(word)
@@ -803,7 +862,18 @@ def extract_text_with_formatting(pdf_path):
                     # Sort words in line by x-position (left to right)
                     line_words.sort(key=lambda x: x['x0'])
                     
-                    # Create a line object with formatting
+                    # Calculate line spacing and indentation
+                    line_spacing = 0
+                    if len(sorted_lines) > 1:
+                        current_idx = sorted_lines.index((y_pos, line_words))
+                        if current_idx > 0:
+                            prev_y_pos = sorted_lines[current_idx - 1][0]
+                            line_spacing = y_pos - prev_y_pos
+                    
+                    # Calculate indentation
+                    indentation = line_words[0]['x0'] if line_words else 0
+                    
+                    # Create a line object with enhanced formatting
                     line_obj = {
                         'text': ' '.join([w['text'] for w in line_words]),
                         'words': line_words,
@@ -812,7 +882,14 @@ def extract_text_with_formatting(pdf_path):
                         'is_table': False,
                         'is_column': False,
                         'is_header': False,
-                        'is_footer': False
+                        'is_footer': False,
+                        'line_spacing': line_spacing,
+                        'indentation': indentation,
+                        'formatting': {
+                            'font': line_words[0].get('fontname', 'Helvetica') if line_words else 'Helvetica',
+                            'size': line_words[0].get('size', 11) if line_words else 11,
+                            'color': None  # Will be set later
+                        }
                     }
                     
                     # Check if this line is part of a table
@@ -845,31 +922,51 @@ def extract_text_with_formatting(pdf_path):
                             line_obj['is_footer'] = True
                             break
                             
+                    # Get text color for the line
+                    if line_words:
+                        with fitz.open(pdf_path) as doc:
+                            mupdf_page = doc[page_num]
+                            bbox = fitz.Rect(
+                                line_words[0]['x0'],
+                                line_words[0]['top'],
+                                line_words[-1]['x0'] + line_words[-1]['width'],
+                                line_words[-1]['bottom']
+                            )
+                            color = get_text_color(mupdf_page, bbox)
+                            line_obj['formatting']['color'] = color
+                            
                     result.append(line_obj)
         
-        # Detect paragraphs
-        paragraphs = detect_paragraphs(result)
+        # Filter out headers and footers from the main content
+        body_lines = [line for line in result if not line.get('is_header', False) and not line.get('is_footer', False)]
         
-        # Detect lists
-        lists = detect_lists(result)
+        # Detect paragraphs with improved spacing detection
+        paragraphs = detect_paragraphs(body_lines)
         
-        # Add paragraph and list information to the result
-        for line in result:
+        # Detect lists with improved detection
+        lists = detect_lists(body_lines)
+        
+        # Add paragraph and list information to the result (only for body lines)
+        for line in body_lines:
             # Find which paragraph this line belongs to
             for i, paragraph in enumerate(paragraphs):
                 if line in paragraph['lines']:
                     line['paragraph_index'] = i
+                    line['paragraph_spacing'] = paragraph.get('spacing', {})
                     break
                     
             # Find which list this line belongs to
             for i, list_obj in enumerate(lists):
                 for item in list_obj['items']:
+                    # Need to map the line_index back to the original list if necessary
+                    # For now, assume item['line_index'] refers to the index within body_lines
                     if line['line_index'] == item['line_index']:
-                        line['list_index'] = i
-                        line['list_type'] = list_obj['type']
-                        break
+                         line['list_index'] = i
+                         line['list_type'] = list_obj['type']
+                         line['list_indentation'] = item['indentation']
+                         break
                         
-        return result
+        return body_lines
     except Exception as e:
         logger.error(f"Error extracting text with formatting: {str(e)}")
         raise
@@ -880,13 +977,39 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
     try:
         register_fonts()
-        # Use standard letter size for output
-        doc_template = SimpleDocTemplate(
-            pdf_path,
-            pagesize=letter,
-            leftMargin=72, rightMargin=72, topMargin=72, bottomMargin=72
-        )
-        page_width, page_height = letter
+        
+        # Get original PDF dimensions and metadata
+        with fitz.open(original_pdf_path) as doc:
+            first_page = doc[0]
+            # Use original PDF's page size and margins
+            page_width = first_page.rect.width
+            page_height = first_page.rect.height
+            # Get original margins
+            left_margin = first_page.rect.x0
+            right_margin = page_width - first_page.rect.x1
+            top_margin = first_page.rect.y0
+            bottom_margin = page_height - first_page.rect.y1
+            
+            # Get original metadata
+            metadata = doc.metadata
+            
+            # Create custom page size
+            custom_page_size = (page_width, page_height)
+            
+            # Create document template with original dimensions
+            doc_template = SimpleDocTemplate(
+                pdf_path,
+                pagesize=custom_page_size,
+                leftMargin=left_margin,
+                rightMargin=right_margin,
+                topMargin=top_margin,
+                bottomMargin=bottom_margin,
+                title=metadata.get('title', ''),
+                author=metadata.get('author', ''),
+                subject=metadata.get('subject', ''),
+                creator=metadata.get('creator', ''),
+                producer=metadata.get('producer', '')
+            )
         
         with pdfplumber.open(original_pdf_path) as pdf:
             doc = fitz.open(original_pdf_path)
@@ -910,7 +1033,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 line_word_indices.append((start, end))
                 original_words.extend(words)
                 
-            # Match and correct words
+            # Match and correct words with exact positioning
             sm = difflib.SequenceMatcher(None, original_words, proofread_words)
             corrected_words = list(original_words)
             opcodes = sm.get_opcodes()
@@ -921,14 +1044,50 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 elif tag == 'delete':
                     corrected_words[i1:i2] = []
                     
+            # Filter out words that were originally part of headers or footers from corrected_words
+            final_corrected_words = []
+            word_idx = 0
+            for line in formatted_lines:
+                words_in_line = line['text'].split()
+                if not line.get('is_header', False) and not line.get('is_footer', False):
+                    # These words are part of the main body, include their corrected versions
+                    final_corrected_words.extend(corrected_words[word_idx : word_idx + len(words_in_line)])
+                # else: These words were part of a header or footer, so they are excluded from the body text
+                word_idx += len(words_in_line)
+
             corrected_lines = []
-            for start, end in line_word_indices:
-                corrected_lines.append(' '.join(corrected_words[start:end]))
-                
-            # Group lines by page
+            current_line_words = []
+            original_line_idx = 0
+            
+            # Reconstruct lines based on the original line structure, using filtered corrected words
+            final_word_idx = 0
+            for line in formatted_lines:
+                 words_in_original_line = line['text'].split()
+                 num_words = len(words_in_original_line)
+                 
+                 if not line.get('is_header', False) and not line.get('is_footer', False):
+                     # This is a body line, take the corresponding number of words from final_corrected_words
+                     corrected_line_text = ' '.join(final_corrected_words[final_word_idx : final_word_idx + num_words])
+                     corrected_lines.append({
+                         'text': corrected_line_text,
+                         'y_pos': line['y_pos'],
+                         'page': line['page'],
+                         'is_table': line['is_table'],
+                         'is_column': line['is_column'],
+                         'line_spacing': line['line_spacing'],
+                         'indentation': line['indentation'],
+                         'formatting': line['formatting'],
+                         'words': final_corrected_words[final_word_idx : final_word_idx + num_words], # Approximation, detailed word data might be needed for precise positioning
+                         'line_index': line['line_index'] # Preserve the original line index
+                     })
+                     final_word_idx += num_words
+                 # else: This is a header or footer line, it's not added to corrected_lines (which represent body content)
+
+            # Group lines by page with exact positioning (using the reconstructed corrected_lines)
             lines_by_page = defaultdict(list)
-            for i, line in enumerate(formatted_lines):
+            for i, line in enumerate(corrected_lines):
                 line = dict(line)
+                # Need to maintain an index for paragraphs and lists detection based on corrected_lines
                 line['line_index'] = i
                 lines_by_page[line.get('page', 0)].append(line)
 
@@ -940,24 +1099,37 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 if not page_lines:
                     continue
 
-                # Detect paragraphs with enhanced spacing
-                paragraphs = detect_paragraphs(page_lines)
+                # Ensure lines passed to detect_paragraphs have required keys and are only body lines
+                body_lines_for_paragraph_detection = []
+                for line in page_lines:
+                     # Add checks for required keys that detect_paragraphs uses and ensure it's a dictionary
+                     if isinstance(line, dict) and all(key in line for key in ['y_pos', 'words']) and not line.get('is_header', False) and not line.get('is_footer', False):
+                         body_lines_for_paragraph_detection.append(line)
+
+                # Detect paragraphs with exact spacing (using the filtered body lines)
+                paragraphs = detect_paragraphs(body_lines_for_paragraph_detection)
                 
                 for para_idx, para in enumerate(paragraphs):
                     para_lines = para['lines']
-                    para_indices = [l['line_index'] for l in para_lines]
-                    para_text = ' '.join([corrected_lines[i] for i in para_indices])
+                    # Reconstruct paragraph text from the text in each line dictionary
+                    para_text = ' '.join([l['text'] for l in para_lines])
                     
                     if not para_lines:
                         continue
 
-                    # Calculate paragraph boundaries with more precision
+                    # Calculate exact paragraph boundaries
                     min_x0 = float('inf')
                     max_x1 = float('-inf')
                     min_y0 = float('inf')
                     max_y1 = float('-inf')
 
-                    for line in para_lines:
+                    # Use the word positions from the original formatted_lines for layout, but corrected text
+                    original_para_lines_indices = [line['line_index'] for line in para_lines] # Indices from the 'corrected_lines' list
+                    
+                    # Find the corresponding original lines to get accurate positioning info
+                    original_lines_for_para = [l for l in formatted_lines if l['line_index'] in original_para_lines_indices]
+
+                    for line in original_lines_for_para:
                         if line['words']:
                             min_x0 = min(min_x0, line['words'][0]['x0'])
                             max_x1 = max(max_x1, line['words'][-1]['x0'] + line['words'][-1]['width'])
@@ -967,86 +1139,66 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     if min_x0 == float('inf') or max_x1 == float('-inf'):
                         continue
 
-                    # Get formatting information
-                    first_word = para_lines[0]['words'][0]
+                    # Get exact formatting information from the first line of the original paragraph
+                    first_original_line = original_lines_for_para[0]
+                    first_word = first_original_line['words'][0]
+
                     font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
                     font_size = float(first_word.get('size', 11))
-                    mupdf_page = doc[para_lines[0]['page']]
+                    mupdf_page = doc[first_original_line['page']]
                     
-                    # Get text color
+                    # Get exact text color from the original line
                     bbox = fitz.Rect(first_word['x0'], first_word['top'], 
                                    first_word['x0'] + first_word['width'], first_word['bottom'])
                     color = get_text_color(mupdf_page, bbox)
                     r, g, b = normalize_color(color) if color else (0, 0, 0)
 
-                    # Calculate indentation with more precision
-                    # Using the min x0 position of all words in the paragraph as the base left indent
-                    min_paragraph_x0 = min(w['x0'] for line in para_lines for w in line['words']) if any(line['words'] for line in para_lines) else doc_template.leftMargin
+                    # Calculate exact indentation using original line positions
+                    min_paragraph_x0 = min(w['x0'] for line in original_lines_for_para for w in line['words']) if any(line['words'] for line in original_lines_for_para) else doc_template.leftMargin
                     left_indent = max(0, min_paragraph_x0 - doc_template.leftMargin)
 
-                    # Using the max x1 position of all words in the paragraph as the base right indent
-                    max_paragraph_x1 = max(w['x0'] + w['width'] for line in para_lines for w in line['words']) if any(line['words'] for line in para_lines) else page_width - doc_template.rightMargin
+                    max_paragraph_x1 = max(w['x0'] + w['width'] for line in original_lines_for_para for w in line['words']) if any(line['words'] for line in original_lines_for_para) else page_width - doc_template.rightMargin
                     right_indent = max(0, page_width - doc_template.rightMargin - max_paragraph_x1)
 
-                    # Calculate first line indent relative to the paragraph's left indent
-                    first_line_x0 = para_lines[0]['words'][0]['x0'] if para_lines[0]['words'] else min_paragraph_x0
+                    first_line_x0 = original_lines_for_para[0]['words'][0]['x0'] if original_lines_for_para[0]['words'] else min_paragraph_x0
                     first_line_indent_relative = max(0, first_line_x0 - min_paragraph_x0)
 
-                    # Use the enhanced spacing information
+                    # Use exact spacing information from the paragraph detection on filtered lines
                     spacing = para.get('spacing', {})
 
-                    # Calculate line spacing within the paragraph (leading)
-                    # Ensure leading is at least 1.15 times the font size (slightly reduced from 1.25) to prevent overlap
-                    detected_avg_line_spacing = spacing.get('avg_line_spacing', font_size * 1.2) # Default still reasonably safe
-                    # Ensure leading is never less than a slightly less aggressive safe minimum
-                    leading = max(detected_avg_line_spacing, font_size * 1.15) # Use detected or fallback, but ensure a slightly lower safe minimum
+                    # Use exact line spacing
+                    leading = spacing.get('avg_line_spacing', font_size * 1.2)
 
-                    # Calculate space before the paragraph
-                    detected_space_before = spacing.get('before', font_size * 0.7) # Default slightly reduced
-                    # Ensure spaceBefore meets a minimum threshold, especially for paragraphs that aren't the very first
-                    min_space_before = font_size * 0.15 if para_idx > 0 or page_idx > 0 else 0 # Slightly lower small minimum space
-                    space_before = max(detected_space_before, min_space_before)
+                    # Use exact paragraph spacing
+                    space_before = spacing.get('before', 0)
+                    space_after = spacing.get('after', 0)
 
-                    # Calculate space after the paragraph
-                    detected_space_after = spacing.get('after', font_size * 0.7) # Default slightly reduced
-                    # Ensure spaceAfter meets a minimum threshold, especially for paragraphs that aren't the very last
-                    min_space_after = font_size * 0.15 if para_idx < len(paragraphs) - 1 or page_idx < len(page_numbers) - 1 else 0 # Slightly lower small minimum space
-                    space_after = max(detected_space_after, min_space_after)
+                    # Get alignment from the paragraph detection
+                    alignment = para.get('formatting', {}).get('alignment', 'left')
+                    reportlab_alignment = TA_JUSTIFY # Default to justify
+                    if alignment == 'left':
+                        reportlab_alignment = TA_LEFT
+                    elif alignment == 'center':
+                        reportlab_alignment = TA_CENTER
+                    elif alignment == 'right':
+                        reportlab_alignment = TA_RIGHT
 
-                    # Create paragraph style with precise spacing
-                    # Apply firstLineIndent only if it's significantly different from the overall left indent
-                    if first_line_indent_relative > font_size * 0.3: # Keep this threshold for first line indent
-                        style = ParagraphStyle(
-                            name='JustifiedWithFirstLineIndent',
-                            fontName=font_name,
-                            fontSize=font_size,
-                            leading=leading, # Use the calculated leading
-                            textColor=Color(r, g, b),
-                            alignment=TA_JUSTIFY,
-                            spaceAfter=space_after,
-                            spaceBefore=space_before,
-                            leftIndent=left_indent,
-                            rightIndent=right_indent,
-                            firstLineIndent=first_line_indent_relative, # Use the calculated relative indent
-                            allowWidows=0,  # Prevent single lines at top/bottom
-                            allowOrphans=0,  # Prevent single lines at top/bottom
-                        )
-                    else:
-                        style = ParagraphStyle(
-                            name='JustifiedWithBlockIndent',
-                            fontName=font_name,
-                            fontSize=font_size,
-                            leading=leading, # Use the calculated leading
-                            textColor=Color(r, g, b),
-                            alignment=TA_JUSTIFY,
-                            spaceAfter=space_after,
-                            spaceBefore=space_before,
-                            leftIndent=left_indent,
-                            rightIndent=right_indent,
-                            firstLineIndent=0,
-                            allowWidows=0,  # Prevent single lines at top/bottom
-                            allowOrphans=0,  # Prevent single lines at top/bottom
-                        )
+                    # Create paragraph style with exact formatting
+                    style = ParagraphStyle(
+                        name=f'ParagraphStyle_{page_idx}_{para_idx}', # Unique name for each style
+                        fontName=font_name,
+                        fontSize=font_size,
+                        leading=leading,
+                        textColor=Color(r, g, b),
+                        alignment=reportlab_alignment,
+                        spaceAfter=space_after,
+                        spaceBefore=space_before,
+                        leftIndent=left_indent,
+                        rightIndent=right_indent,
+                        firstLineIndent=first_line_indent_relative,
+                        allowWidows=0,
+                        allowOrphans=0,
+                    )
 
                     para_obj = Paragraph(para_text, style)
                     story.append(para_obj)
@@ -1055,19 +1207,56 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                 if page_idx < len(page_numbers) - 1:
                     story.append(PageBreak())
 
-            # Add page numbers (assuming you want them centered at the bottom)
+            # Add page numbers with exact positioning
             def add_page_number(canvas, doc):
                 canvas.saveState()
-                # Draw page number at the bottom center, outside the margin
-                canvas.setFont('Helvetica', 9) # Adjust font and size as needed
-                canvas.drawCentredString(page_width/2, doc_template.bottomMargin / 2 , str(doc.page))
+                # Get original PDF dimensions and margins (re-calculated for safety)
+                with fitz.open(original_pdf_path) as orig_doc:
+                    first_page = orig_doc[0]
+                    page_width = first_page.rect.width
+                    page_height = first_page.rect.height
+                    bottom_margin = page_height - first_page.rect.y1
+
+                    # Look for page number in the footer area
+                    footer_rect = fitz.Rect(0, page_height - bottom_margin - 20, page_width, page_height - bottom_margin)
+                    
+                    page_number_found = False
+                    # Try to find the page number word in the original footer
+                    for page in orig_doc:
+                         if page.number == doc.page -1: # Adjust page number for 0-indexed fitz pages vs 1-indexed doc.page
+                            for word in page.get_text("words", clip=footer_rect):
+                                if word[4].strip().isdigit() and int(word[4].strip()) == doc.page:
+                                    x, y = word[0], word[1]
+                                    font_size = word[5]
+                                    original_font_name = word[4] # Get the font name string
+                                    font_name_to_use = get_font_name(original_font_name) # Normalize the font name
+
+                                    # Ensure font is registered, fallback to Helvetica
+                                    try:
+                                        pdfmetrics.getFont(font_name_to_use)
+                                    except: # Fallback if font not found/registered
+                                         font_name_to_use = 'Helvetica'
+                                         font_size = 9 # Default size if fallback
+
+                                    canvas.setFont(font_name_to_use, font_size)
+                                    canvas.drawString(x, y, str(doc.page))
+                                    page_number_found = True
+                                    break # Found the page number for this page
+                         if page_number_found:
+                             break # Found page number on the correct original page
+
+                    # Default to center bottom if no page number found in original footer
+                    if not page_number_found:
+                         canvas.setFont('Helvetica', 9)
+                         canvas.drawCentredString(page_width/2, doc_template.bottomMargin / 2, str(doc.page))
+
                 canvas.restoreState()
 
             # Build document
             doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
             doc.close()
             
-            logger.info("PDF saved successfully with enhanced formatting")
+            logger.info("PDF saved successfully with exact formatting")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
