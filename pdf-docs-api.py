@@ -474,87 +474,47 @@ def get_font_name(font_name):
     """Normalizes font names with advanced mapping and fallback mechanism."""
     if not font_name:
         return "Helvetica"  # Default font
-        
+
     # Clean up font name
     font_name = font_name.lower().strip()
-    
-    # Remove common prefixes and suffixes
-    font_name = re.sub(r'^[a-z]+[_-]', '', font_name)
-    font_name = re.sub(r'[_-][a-z]+$', '', font_name)
-    
-    # Map common font names
+
+    # Map common font names (add more as needed)
     font_map = {
-        "helv": "Helvetica",
         "helvetica": "Helvetica",
         "arial": "Helvetica",
-        "tiro": "Times-Roman",
-        "times": "Times-Roman",
-        "timesroman": "Times-Roman",
-        "times new roman": "Times-Roman",
-        "timesnewroman": "Times-Roman",
-        "helvetica-bold": "Helvetica-Bold",
-        "helveticabold": "Helvetica-Bold",
         "arial-bold": "Helvetica-Bold",
-        "arialbold": "Helvetica-Bold",
+        "arialitalic": "Helvetica-Oblique",
+        "arial-bolditalic": "Helvetica-BoldOblique",
+        "calibri": "Calibri",
+        "calibri-bold": "Calibri-Bold",
+        "calibri-italic": "Calibri-Italic",
+        "calibri-bolditalic": "Calibri-BoldItalic",
+        "verdana": "Verdana",
+        "tahoma": "Tahoma",
+        "georgia": "Georgia",
+        "times": "Times-Roman",
+        "times new roman": "Times-Roman",
         "times-bold": "Times-Bold",
-        "timesbold": "Times-Bold",
         "times-italic": "Times-Italic",
-        "timesitalic": "Times-Italic",
         "times-bolditalic": "Times-BoldItalic",
-        "timesbolditalic": "Times-BoldItalic",
         "courier": "Courier",
-        "courier-bold": "Courier-Bold",
-        "courierbold": "Courier-Bold",
-        "courier-italic": "Courier-Oblique",
-        "courieritalic": "Courier-Oblique",
-        "courier-bolditalic": "Courier-BoldOblique",
-        "courierbolditalic": "Courier-BoldOblique",
+        "courier new": "Courier",
         "symbol": "Symbol",
         "zapfdingbats": "ZapfDingbats",
-        "calibri": "Helvetica",
-        "verdana": "Helvetica",
-        "tahoma": "Helvetica",
-        "georgia": "Times-Roman",
-        "garamond": "Times-Roman",
-        "bookman": "Times-Roman",
-        "palatino": "Times-Roman",
-        "goudy": "Times-Roman",
-        "century": "Times-Roman",
-        "avantgarde": "Helvetica",
-        "futura": "Helvetica",
-        "optima": "Helvetica",
-        "gill": "Helvetica",
-        "franklin": "Helvetica",
-        "lucida": "Courier",
-        "consolas": "Courier",
-        "monaco": "Courier",
-        "andale": "Courier"
     }
-    
-    # Check if font name is in our mapping
-    if font_name in font_map:
-        return font_map[font_name]
-    
-    # Check if font name contains any of our mapped names
     for key in font_map:
         if key in font_name:
             return font_map[key]
-    
-    # Check for bold/italic variants
-    if "bold" in font_name and "italic" in font_name:
-        return "Times-BoldItalic"
-    elif "bold" in font_name:
-        return "Helvetica-Bold"
-    elif "italic" in font_name or "oblique" in font_name:
-        return "Times-Italic"
-    
-    # Default to Helvetica if no match
+    # Fallback to Helvetica
     return "Helvetica"
 
 def register_fonts():
-    """Registers common fonts with ReportLab."""
+    """Registers common fonts with ReportLab if available."""
     try:
-        # Register standard fonts
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.pdfbase import pdfmetrics
+        import os
+        # Register standard built-in fonts
         pdfmetrics.registerFontFamily(
             'Helvetica',
             normal='Helvetica',
@@ -562,7 +522,6 @@ def register_fonts():
             italic='Helvetica-Oblique',
             boldItalic='Helvetica-BoldOblique'
         )
-        
         pdfmetrics.registerFontFamily(
             'Times-Roman',
             normal='Times-Roman',
@@ -570,7 +529,6 @@ def register_fonts():
             italic='Times-Italic',
             boldItalic='Times-BoldItalic'
         )
-        
         pdfmetrics.registerFontFamily(
             'Courier',
             normal='Courier',
@@ -578,34 +536,36 @@ def register_fonts():
             italic='Courier-Oblique',
             boldItalic='Courier-BoldOblique'
         )
-        
         # Try to register additional fonts if available
-        try:
-            # Check if Arial font is available
-            arial_path = os.path.join(os.environ.get('WINDIR', ''), 'Fonts', 'arial.ttf')
-            if os.path.exists(arial_path):
-                TTFont('Arial', arial_path)
-                logger.info("Registered Arial font")
-                
-            # Check for other common fonts
-            font_paths = {
-                'Calibri': 'calibri.ttf',
-                'Verdana': 'verdana.ttf',
-                'Tahoma': 'tahoma.ttf',
-                'Georgia': 'georgia.ttf',
-                'Times New Roman': 'times.ttf',
-                'Courier New': 'cour.ttf'
-            }
-            
-            for font_name, font_file in font_paths.items():
-                font_path = os.path.join(os.environ.get('WINDIR', ''), 'Fonts', font_file)
-                if os.path.exists(font_path):
-                    TTFont(font_name, font_path)
-                    logger.info(f"Registered {font_name} font")
-                    
-        except Exception as e:
-            logger.warning(f"Could not register additional fonts: {str(e)}")
-            
+        font_candidates = {
+            'Arial': 'arial.ttf',
+            'Arial-Bold': 'arialbd.ttf',
+            'Arial-Italic': 'ariali.ttf',
+            'Arial-BoldItalic': 'arialbi.ttf',
+            'Calibri': 'calibri.ttf',
+            'Calibri-Bold': 'calibrib.ttf',
+            'Calibri-Italic': 'calibrii.ttf',
+            'Calibri-BoldItalic': 'calibriz.ttf',
+            'Verdana': 'verdana.ttf',
+            'Tahoma': 'tahoma.ttf',
+            'Georgia': 'georgia.ttf',
+            'Times New Roman': 'times.ttf',
+            'Times-Bold': 'timesbd.ttf',
+            'Times-Italic': 'timesi.ttf',
+            'Times-BoldItalic': 'timesbi.ttf',
+            'Courier New': 'cour.ttf',
+            'Courier-Bold': 'courbd.ttf',
+            'Courier-Oblique': 'couri.ttf',
+            'Courier-BoldOblique': 'courbi.ttf',
+        }
+        font_dir = os.path.join(os.environ.get('WINDIR', ''), 'Fonts')
+        for font_name, font_file in font_candidates.items():
+            font_path = os.path.join(font_dir, font_file)
+            if os.path.exists(font_path):
+                try:
+                    pdfmetrics.registerFont(TTFont(font_name, font_path))
+                except Exception as e:
+                    logger.warning(f"Could not register font {font_name}: {str(e)}")
     except Exception as e:
         logger.warning(f"Error registering fonts: {str(e)}")
 
