@@ -902,31 +902,61 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         'right': TA_RIGHT,
                         'justify': TA_JUSTIFY
                     }
-                    
-                    # Get indentation and spacing - adjusting values based on observation
-                    # These values might need further tuning based on specific PDF characteristics
-                    left_indent = max(0, para_lines[0].get('indentation', 0))
-                    right_indent = max(0, para_lines[0].get('right_margin', 0))
-                    
-                    # Simple heuristic for spacing: add space if the gap between lines is significant
-                    space_after = 0
-                    if page_idx < len(page_numbers) - 1 or para_lines[-1] != lines_by_page[page_num][-1]:
-                         # Check spacing to the next line if it exists
-                         next_line_index = para_lines[-1]['line_index'] + 1
-                         if next_line_index < len(formatted_lines):
-                             next_line = formatted_lines[next_line_index]
-                             # A significant vertical gap suggests a new paragraph or extra spacing
-                             if next_line['y_pos'] - para_lines[-1]['y_pos'] > para_lines[-1]['line_height'] * 1.5: # Threshold 1.5 times line height
-                                  space_after = para_lines[-1]['line_height'] * 0.8 # Add some space, adjust multiplier as needed
 
+                    # Calculate indentation and spacing based on extracted positions
+                    # We need to translate PDF coordinates to ReportLab's model
+
+                    # Get the bounding box of the paragraph or its first line
+                    # Using the first line's bounding box for simplicity for now
+                    first_line_words = para_lines[0]['words']
+                    if not first_line_words:
+                        continue # Skip empty paragraphs
+
+                    min_x0 = min(w['x0'] for w in first_line_words)
+                    max_x1 = max(w['x1'] for w in first_line_words)
+                    line_height = para_lines[0].get('line_height', font_size * 1.2)
+
+                    # Calculate indentation relative to the left margin of the ReportLab document
+                    # The default left margin in SimpleDocTemplate is 72 points
+                    reportlab_left_margin = doc_template.leftMargin
+                    left_indent = max(0, min_x0 - reportlab_left_margin)
+
+                    # Calculate right indentation relative to the right margin
+                    reportlab_right_margin = page_width - doc_template.rightMargin
+                    right_indent = max(0, reportlab_right_margin - max_x1)
+
+                    # Calculate space before this paragraph
                     space_before = 0
-                    if page_idx > 0 or para_lines[0] != lines_by_page[page_num][0]:
-                        # Check spacing from the previous line if it exists
-                        prev_line_index = para_lines[0]['line_index'] - 1
-                        if prev_line_index >= 0:
-                            prev_line = formatted_lines[prev_line_index]
-                            if para_lines[0]['y_pos'] - prev_line['y_pos'] > prev_line['line_height'] * 1.5:
-                                space_before = prev_line['line_height'] * 0.8
+                    if para_lines[0]['line_index'] > 0:
+                        prev_line = formatted_lines[para_lines[0]['line_index'] - 1]
+                        # Calculate vertical gap between the previous line's bottom and the current line's top
+                        prev_bottom = max(w['bottom'] for w in prev_line['words']) if prev_line['words'] else prev_line['y_pos'] + prev_line.get('line_height', 0)
+                        current_top = min(w['top'] for w in first_line_words) if first_line_words else para_lines[0]['y_pos']
+                        vertical_gap = current_top - prev_bottom
+
+                        # Estimate expected line height based on previous line
+                        expected_line_height = prev_line.get('line_height', font_size * 1.2)
+
+                        # If the vertical gap is significantly larger than a normal line break, add the excess as space_before
+                        # A threshold slightly larger than expected line height indicates extra spacing
+                        if vertical_gap > expected_line_height * 1.2: # Using 1.2 as a threshold
+                             space_before = vertical_gap - expected_line_height
+
+                    # Calculate space after this paragraph
+                    space_after = 0
+                    if para_lines[-1]['line_index'] < len(formatted_lines) - 1:
+                        next_line = formatted_lines[para_lines[-1]['line_index'] + 1]
+                        # Calculate vertical gap between the current line's bottom and the next line's top
+                        current_bottom = max(w['bottom'] for w in para_lines[-1]['words']) if para_lines[-1]['words'] else para_lines[-1]['y_pos'] + para_lines[-1].get('line_height', 0)
+                        next_top = min(w['top'] for w in next_line['words']) if next_line['words'] else next_line['y_pos']
+                        vertical_gap = next_top - current_bottom
+
+                        # Estimate expected line height based on current line
+                        expected_line_height = para_lines[-1].get('line_height', font_size * 1.2)
+
+                        # If the vertical gap is significantly larger than a normal line break, add the excess as space_after
+                        if vertical_gap > expected_line_height * 1.2: # Using 1.2 as a threshold
+                             space_after = vertical_gap - expected_line_height
 
                     # Create paragraph style with all formatting
                     style = ParagraphStyle(
