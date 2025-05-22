@@ -19,7 +19,7 @@ import json
 import numpy as np
 from collections import defaultdict
 import difflib
-from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.lib.enums import TA_JUSTIFY
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -764,154 +764,98 @@ def extract_text_with_formatting(pdf_path):
         logger.error(f"Error extracting text with formatting: {str(e)}")
         raise
 
-def detect_text_alignment(page, line_words):
+def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
-    Detects text alignment for a line of text.
-    Returns one of: 'LEFT', 'CENTER', 'RIGHT', 'JUSTIFY'
+    Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
     """
     try:
-        if not line_words:
-            return 'JUSTIFY'  # Default to justified alignment
-            
-        # Get page width
-        page_width = page.width
-        
-        # Calculate line width and position
-        line_start = line_words[0]['x0']
-        line_end = line_words[-1]['x0'] + line_words[-1]['width']
-        line_width = line_end - line_start
-        
-        # Calculate margins (assuming standard margins)
-        left_margin = 72  # 1 inch in points
-        right_margin = page_width - 72
-        
-        # Calculate available width
-        available_width = right_margin - left_margin
-        
-        # Debug logging
-        logger.debug(f"Line width: {line_width}, Available width: {available_width}")
-        logger.debug(f"Number of words: {len(line_words)}")
-        
-        # First, check if this is a multi-word line that spans most of the width
-        if len(line_words) > 2:
-            # Calculate the percentage of available width used
-            width_percentage = (line_width / available_width) * 100
-            logger.debug(f"Width percentage: {width_percentage}%")
-            
-            # If the line uses more than 60% of the available width, it's probably justified
-            if width_percentage > 60:
-                logger.debug("Detected as justified text based on width percentage")
-                return 'JUSTIFY'
-        
-        # Check for justification by looking at word spacing
-        if len(line_words) > 1:
-            total_gap = 0
-            gaps = []
-            for i in range(len(line_words) - 1):
-                gap = line_words[i+1]['x0'] - (line_words[i]['x0'] + line_words[i]['width'])
-                gaps.append(gap)
-                total_gap += gap
-            avg_gap = total_gap / (len(line_words) - 1)
-            
-            # Calculate gap variance to detect justified text
-            gap_variance = sum((g - avg_gap) ** 2 for g in gaps) / len(gaps) if gaps else 0
-            
-            logger.debug(f"Average gap: {avg_gap}, Gap variance: {gap_variance}")
-            logger.debug(f"Line start: {line_start}, Left margin: {left_margin}")
-            
-            # Check for justified text based on multiple criteria
-            is_justified = False
-            
-            # Criterion 1: Line spans most of the width and has multiple words
-            if line_width > available_width * 0.6 and len(line_words) > 2:
-                is_justified = True
-                logger.debug("Criterion 1 met: Line spans most of width with multiple words")
-                
-            # Criterion 2: Uniform word spacing with reasonable gaps
-            if len(gaps) > 1 and gap_variance < 200 and avg_gap > 2:
-                is_justified = True
-                logger.debug("Criterion 2 met: Uniform word spacing")
-                
-            # Criterion 3: Multiple words with significant spacing
-            if len(line_words) > 2 and avg_gap > 1 and line_width > available_width * 0.5:
-                is_justified = True
-                logger.debug("Criterion 3 met: Multiple words with significant spacing")
-                
-            # Criterion 4: Text starts near left margin and spans most of width
-            if (abs(line_start - left_margin) < 30 and 
-                line_width > available_width * 0.7 and 
-                len(line_words) > 1):
-                is_justified = True
-                logger.debug("Criterion 4 met: Text starts at margin and spans width")
-                
-            if is_justified:
-                logger.debug("Detected as justified text based on spacing")
-                return 'JUSTIFY'
-        
-        # Check for center alignment
-        center_point = (left_margin + right_margin) / 2
-        line_center = (line_start + line_end) / 2
-        
-        # More strict center alignment check
-        if (abs(line_center - center_point) < 15 and  # Reduced tolerance for center alignment
-            abs(line_width - available_width) > 50):  # Center-aligned text is usually shorter
-            return 'CENTER'
-            
-        # Check for right alignment - more strict conditions
-        if (abs(line_end - right_margin) < 20 and  # Text ends near right margin
-            abs(line_start - left_margin) > 50 and  # Text starts far from left margin
-            abs(line_width - available_width) < 50):  # Text is not full width
-            return 'RIGHT'
-            
-        # Check for left alignment - very strict conditions
-        if (abs(line_start - left_margin) < 20 and  # Text starts near left margin
-            abs(line_width - available_width) < 50 and  # Text is not full width
-            len(line_words) <= 2):  # Left-aligned text is usually short
-            return 'LEFT'
-            
-        # Default to justified alignment for multi-word lines
-        if len(line_words) > 2:
-            logger.debug("Defaulting to justified alignment for multi-word line")
-            return 'JUSTIFY'
-            
-        # Default to left alignment for short lines
-        return 'LEFT'
-        
+        register_fonts()
+        doc_template = SimpleDocTemplate(
+            pdf_path,
+            pagesize=letter,
+            leftMargin=72, rightMargin=72, topMargin=72, bottomMargin=72
+        )
+        page_width, page_height = letter
+        with pdfplumber.open(original_pdf_path) as pdf:
+            doc = fitz.open(original_pdf_path)
+            formatted_lines = extract_text_with_formatting(original_pdf_path)
+            if isinstance(text, str):
+                proofread_words = text.split()
+            else:
+                proofread_words = ' '.join(text).split()
+            original_words = []
+            line_word_indices = []
+            idx = 0
+            for line in formatted_lines:
+                words = line['text'].split()
+                start = idx
+                idx += len(words)
+                end = idx
+                line_word_indices.append((start, end))
+                original_words.extend(words)
+            sm = difflib.SequenceMatcher(None, original_words, proofread_words)
+            corrected_words = list(original_words)
+            opcodes = sm.get_opcodes()
+            for tag, i1, i2, j1, j2 in opcodes:
+                if tag in ('replace', 'insert'):
+                    corrected_words[i1:i2] = proofread_words[j1:j2]
+                elif tag == 'delete':
+                    corrected_words[i1:i2] = []
+            corrected_lines = []
+            for start, end in line_word_indices:
+                corrected_lines.append(' '.join(corrected_words[start:end]))
+            # Group lines by page number
+            lines_by_page = defaultdict(list)
+            for i, line in enumerate(formatted_lines):
+                line = dict(line)
+                line['line_index'] = i
+                lines_by_page[line.get('page', 0)].append(line)
+            story = []
+            page_numbers = sorted(lines_by_page.keys())
+            for page_idx, page_num in enumerate(page_numbers):
+                page_lines = lines_by_page[page_num]
+                # Detect paragraphs for this page
+                paragraphs = detect_paragraphs(page_lines)
+                for para in paragraphs:
+                    para_lines = para['lines']
+                    para_indices = [l['line_index'] for l in para_lines]
+                    para_text = ' '.join([corrected_lines[i] for i in para_indices])
+                    if not para_lines:
+                        continue
+                    first_word = para_lines[0]['words'][0]
+                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                    font_size = float(first_word.get('size', 11))
+                    mupdf_page = doc[para_lines[0]['page']]
+                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                    color = get_text_color(mupdf_page, bbox)
+                    r, g, b = normalize_color(color) if color else (0, 0, 0)
+                    style = ParagraphStyle(
+                        name='Justified',
+                        fontName=font_name,
+                        fontSize=font_size,
+                        leading=font_size * 1.2,
+                        textColor=Color(r, g, b),
+                        alignment=TA_JUSTIFY,
+                        spaceAfter=font_size * 0.5,
+                        spaceBefore=0,
+                        leftIndent=0,
+                        rightIndent=0,
+                    )
+                    para_obj = Paragraph(para_text, style)
+                    story.append(para_obj)
+                    story.append(Spacer(1, font_size * 0.5))
+                # Add a page break after each page except the last
+                if page_idx < len(page_numbers) - 1:
+                    story.append(PageBreak())
+            def add_page_number(canvas, doc):
+                canvas.setFont('Helvetica', 10)
+                canvas.drawString(page_width/2, 30, str(doc.page))
+            doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+            doc.close()
+            logger.info("PDF saved successfully with original formatting")
     except Exception as e:
-        logger.warning(f"Error detecting text alignment: {str(e)}")
-        return 'JUSTIFY'  # Default to justified alignment on error
-
-
-def save_text_to_pdf(text, pdf_path, original_pdf_path):
-    """Save proofread text to a new PDF while preserving layout/images using PyMuPDF."""
-    import fitz  # PyMuPDF
-    import language_tool_python
-
-    tool = language_tool_python.LanguageTool('en-US')
-    doc = fitz.open(original_pdf_path)
-
-    for page in doc:
-        blocks = page.get_text("blocks")
-        for b in blocks:
-            x0, y0, x1, y1, original_text = b[:5]
-            if not original_text.strip():
-                continue
-            corrected_text = language_tool_python.utils.correct(original_text, tool.check(original_text))
-            if corrected_text.strip() != original_text.strip():
-                rect = fitz.Rect(x0, y0, x1, y1)
-                # Cover the old text with a white box
-                page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
-                # Write the corrected text in same place
-                page.insert_text((x0, y0), corrected_text, fontsize=11, fontname="helv")
-
-    doc.save(pdf_path)
-    doc.close()
-
-
-
-# Removed legacy ReportLab-based PDF rendering logic
-
-    # Removed orphaned except block from old code
+        logger.error(f"Error creating PDF: {str(e)}")
+        raise e
 
 @app.route('/convert', methods=['POST'])
 def convert_and_proofread():
