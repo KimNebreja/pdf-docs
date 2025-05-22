@@ -471,31 +471,42 @@ def normalize_color(color):
         logger.warning(f"Error normalizing color {color}: {str(e)}")
         return (0, 0, 0)  # Default to black on error
 
-def get_font_name(font_name, bold=False):
-    """Normalizes font names with advanced mapping and fallback mechanism. Supports bold detection and more font families."""
+def get_font_name(font_name):
+    """Normalizes font names with advanced mapping and fallback mechanism."""
     if not font_name:
-        return "Helvetica-Bold" if bold else "Helvetica"
+        return "Helvetica"  # Default font
+
+    # Clean up font name
     font_name = font_name.lower().strip()
-    # Map common font families
-    if "times" in font_name:
-        return "Times-Bold" if bold else "Times-Roman"
-    if "courier" in font_name:
-        return "Courier-Bold" if bold else "Courier"
-    if "arial" in font_name:
-        return "Helvetica-Bold" if bold else "Helvetica"
-    if "helvetica" in font_name:
-        return "Helvetica-Bold" if bold else "Helvetica"
-    if "calibri" in font_name:
-        return "Helvetica-Bold" if bold else "Helvetica"
-    if "verdana" in font_name:
-        return "Helvetica-Bold" if bold else "Helvetica"
-    if "tahoma" in font_name:
-        return "Helvetica-Bold" if bold else "Helvetica"
-    if "georgia" in font_name:
-        return "Times-Bold" if bold else "Times-Roman"
-    # Add more mappings as needed
-    if bold:
-        return "Helvetica-Bold"
+
+    # Map common font names (add more as needed)
+    font_map = {
+        "helvetica": "Helvetica",
+        "arial": "Helvetica",
+        "arial-bold": "Helvetica-Bold",
+        "arialitalic": "Helvetica-Oblique",
+        "arial-bolditalic": "Helvetica-BoldOblique",
+        "calibri": "Calibri",
+        "calibri-bold": "Calibri-Bold",
+        "calibri-italic": "Calibri-Italic",
+        "calibri-bolditalic": "Calibri-BoldItalic",
+        "verdana": "Verdana",
+        "tahoma": "Tahoma",
+        "georgia": "Georgia",
+        "times": "Times-Roman",
+        "times new roman": "Times-Roman",
+        "times-bold": "Times-Bold",
+        "times-italic": "Times-Italic",
+        "times-bolditalic": "Times-BoldItalic",
+        "courier": "Courier",
+        "courier new": "Courier",
+        "symbol": "Symbol",
+        "zapfdingbats": "ZapfDingbats",
+    }
+    for key in font_map:
+        if key in font_name:
+            return font_map[key]
+    # Fallback to Helvetica
     return "Helvetica"
 
 def register_fonts():
@@ -711,7 +722,7 @@ def apply_proofread_text(original_text, proofread_text, selected_suggestions=Non
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=None, selected_suggestions=None):
     """
-    Saves proofread text to a new PDF file, re-justifying each line after proofreading so the line is always justified even if the text changes. Detects and matches bold text and font family, and infers alignment (left, right, center, justified).
+    Saves proofread text to a new PDF file, re-justifying each line after proofreading so the line is always justified even if the text changes.
     """
     try:
         from reportlab.pdfgen import canvas as rl_canvas
@@ -782,76 +793,41 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                             x1s = [span["bbox"][2] for span in line_spans]
                             line_x0 = min(x0s)
                             line_x1 = max(x1s)
-                            margin_tol = 10  # tolerance for margin detection
-                            is_left = abs(line_x0 - 0) < margin_tol
-                            is_right = abs(line_x1 - page_width) < margin_tol
-                            is_justified = is_left and is_right
-                            is_center = not is_left and not is_right
                             # Prepare the full line text from aligned spans
                             line_words = []
-                            line_bold_flags = []
-                            line_fonts = []
                             for span in line_spans:
                                 original_words = span["text"].split()
                                 n_words = len(original_words)
                                 draw_words = aligned_spans[span_word_idx:span_word_idx + n_words]
                                 line_words.extend(draw_words if draw_words else original_words)
-                                # Detect boldness for each word in the span
-                                is_bold = "bold" in span.get("font", "").lower()
-                                line_bold_flags.extend([is_bold] * n_words)
-                                # Track font for each word
-                                line_fonts.extend([span.get("font", "Helvetica")] * n_words)
                                 span_word_idx += n_words
                             # Calculate y position (use first span's y)
                             y = page_height - line_spans[0]["bbox"][1]
+                            font_name = get_font_name(line_spans[0].get("font", "Helvetica"))
                             font_size = line_spans[0].get("size", 11)
+                            c.setFont(font_name, font_size)
                             # Calculate text width
-                            total_word_width = sum([c.stringWidth(w, get_font_name(f, bold=bf), font_size) for w, f, bf in zip(line_words, line_fonts, line_bold_flags)])
+                            total_word_width = sum([c.stringWidth(w, font_name, font_size) for w in line_words])
                             n_spaces = len(line_words) - 1
                             available_width = line_x1 - line_x0
-                            # Alignment logic
-                            if is_justified and n_spaces > 0 and total_word_width < available_width:
+                            if n_spaces > 0 and total_word_width < available_width:
                                 # Justify: distribute extra space between words
                                 extra_space = (available_width - total_word_width) / n_spaces
                                 x = line_x0
-                                for i, (word, font, is_bold) in enumerate(zip(line_words, line_fonts, line_bold_flags)):
-                                    font_name = get_font_name(font, bold=is_bold)
-                                    c.setFont(font_name, font_size)
+                                for i, word in enumerate(line_words):
                                     c.drawString(x, y, word)
                                     word_width = c.stringWidth(word, font_name, font_size)
                                     if i < n_spaces:
                                         x += word_width + extra_space
-                            elif is_center:
-                                text_width = sum([c.stringWidth(w, get_font_name(f, bold=bf), font_size) for w, f, bf in zip(line_words, line_fonts, line_bold_flags)]) + (len(line_words)-1)*c.stringWidth(' ', get_font_name(line_fonts[0], bold=line_bold_flags[0]), font_size)
-                                x = line_x0 + (line_x1 - line_x0 - text_width) / 2
-                                for word, font, is_bold in zip(line_words, line_fonts, line_bold_flags):
-                                    font_name = get_font_name(font, bold=is_bold)
-                                    c.setFont(font_name, font_size)
-                                    c.drawString(x, y, word)
-                                    word_width = c.stringWidth(word, font_name, font_size)
-                                    x += word_width + c.stringWidth(' ', font_name, font_size)
-                            elif is_right:
-                                text_width = sum([c.stringWidth(w, get_font_name(f, bold=bf), font_size) for w, f, bf in zip(line_words, line_fonts, line_bold_flags)]) + (len(line_words)-1)*c.stringWidth(' ', get_font_name(line_fonts[0], bold=line_bold_flags[0]), font_size)
-                                x = line_x1 - text_width
-                                for word, font, is_bold in zip(line_words, line_fonts, line_bold_flags):
-                                    font_name = get_font_name(font, bold=is_bold)
-                                    c.setFont(font_name, font_size)
-                                    c.drawString(x, y, word)
-                                    word_width = c.stringWidth(word, font_name, font_size)
-                                    x += word_width + c.stringWidth(' ', font_name, font_size)
-                            else:  # left
+                            else:
+                                # Left align if only one word or no extra space
                                 x = line_x0
-                                for word, font, is_bold in zip(line_words, line_fonts, line_bold_flags):
-                                    font_name = get_font_name(font, bold=is_bold)
-                                    c.setFont(font_name, font_size)
-                                    c.drawString(x, y, word)
-                                    word_width = c.stringWidth(word, font_name, font_size)
-                                    x += word_width + c.stringWidth(' ', font_name, font_size)
+                                c.drawString(x, y, ' '.join(line_words))
             if page_num < len(doc) - 1:
                 c.showPage()
         c.save()
         doc.close()
-        logger.info("PDF saved successfully with improved font style and alignment matching.")
+        logger.info("PDF saved successfully with re-justified lines after proofreading.")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
