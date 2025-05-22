@@ -658,43 +658,41 @@ def extract_text_with_formatting(pdf_path):
     try:
         result = []
         images = []
-        
+
         # Open PDF with PyMuPDF to get image information
         doc = fitz.open(pdf_path)
-        
         for page_num in range(len(doc)):
-            page = doc[page_num]
-            # Get images on this page
-            image_list = page.get_images(full=True)
+            mupdf_page = doc[page_num]
+            image_list = mupdf_page.get_images(full=True)
             for img in image_list:
                 xref = img[0]
                 base_image = doc.extract_image(xref)
-                image_rect = page.get_image_bbox(img)
+                image_rect = mupdf_page.get_image_bbox(img)
                 images.append({
                     'page': page_num,
                     'rect': image_rect,
                     'xref': xref,
                     'ext': base_image["ext"]
                 })
-        
+
         # Use pdfplumber for text extraction
         with pdfplumber.open(pdf_path) as pdf:
-            for page_num, page in enumerate(pdf.pages):
-                # Get text blocks with formatting
-                text_blocks = page.extract_text_blocks()
-                
+            for page_num, plumber_page in enumerate(pdf.pages):
+                # The following is correct: extract_text_blocks is a pdfplumber Page method
+                text_blocks = plumber_page.extract_text_blocks()
                 for block in text_blocks:
                     # Add image information if this block contains an image
-                    block_images = [img for img in images if img['page'] == page_num and 
-                                  img['rect'].intersects(fitz.Rect(block['x0'], block['top'], 
-                                                                 block['x1'], block['bottom']))]
-                    
+                    block_images = [
+                        img for img in images
+                        if img['page'] == page_num and
+                        img['rect'].intersects(fitz.Rect(block['x0'], block['top'], block['x1'], block['bottom']))
+                    ]
                     block['images'] = block_images
                     result.append(block)
-        
+
         doc.close()
         return result
-        
+
     except Exception as e:
         logger.error(f"Error extracting text with formatting: {str(e)}")
         raise
