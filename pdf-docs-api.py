@@ -841,18 +841,32 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         'JUSTIFY': TA_JUSTIFY
                     }
                     
+                    # Create paragraph style with consistent alignment
                     style = ParagraphStyle(
-                        name='Custom',
+                        name=f'Custom_{page_num}_{len(story)}',  # Unique name for each paragraph
                         fontName=font_name,
                         fontSize=font_size,
                         leading=font_size * 1.2,
                         textColor=Color(r, g, b),
-                        alignment=alignment_map.get(alignment, TA_LEFT),
+                        alignment=alignment_map.get(alignment, TA_JUSTIFY),  # Default to justify if alignment not found
                         spaceAfter=font_size * 0.5,
                         spaceBefore=0,
                         leftIndent=0,
                         rightIndent=0,
+                        firstLineIndent=0,
+                        allowWidows=1,
+                        allowOrphans=1,
+                        wordWrap='CJK',  # Better word wrapping
+                        splitLongWords=1,  # Allow splitting long words
+                        borderWidth=0,
+                        borderColor=Color(0, 0, 0),
+                        borderPadding=0,
+                        borderRadius=0,
+                        backColor=None,
+                        alignment=TA_JUSTIFY  # Force justify alignment for all paragraphs
                     )
+                    
+                    # Create paragraph with the style
                     para_obj = Paragraph(para_text, style)
                     story.append(para_obj)
                     story.append(Spacer(1, font_size * 0.5))
