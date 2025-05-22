@@ -678,8 +678,18 @@ def extract_text_with_formatting(pdf_path):
         # Use pdfplumber for text extraction
         with pdfplumber.open(pdf_path) as pdf:
             for page_num, plumber_page in enumerate(pdf.pages):
-                # The following is correct: extract_text_blocks is a pdfplumber Page method
-                text_blocks = plumber_page.extract_text_blocks()
+                # Use extract_text_blocks if available, else fallback to extract_words
+                if hasattr(plumber_page, "extract_text_blocks"):
+                    text_blocks = plumber_page.extract_text_blocks()
+                else:
+                    words = plumber_page.extract_words()
+                    text_blocks = [{
+                        'text': ' '.join([w['text'] for w in words]),
+                        'x0': min([w['x0'] for w in words]) if words else 0,
+                        'top': min([w['top'] for w in words]) if words else 0,
+                        'x1': max([w['x1'] for w in words]) if words else 0,
+                        'bottom': max([w['bottom'] for w in words]) if words else 0,
+                    }]
                 for block in text_blocks:
                     # Add image information if this block contains an image
                     block_images = [
