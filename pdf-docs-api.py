@@ -730,6 +730,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
         import tempfile
         import difflib
         register_fonts()
+        # Apply selected suggestions to the proofread text before mapping spans
+        if selected_suggestions:
+            for original_word, selected_word in selected_suggestions.items():
+                text = text.replace(original_word, selected_word)
         # Open the original PDF to extract layout and images
         doc = fitz.open(original_pdf_path)
         # Build a list of all original spans (in order)
@@ -807,7 +811,7 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                 c.showPage()
         c.save()
         doc.close()
-        logger.info("PDF saved successfully with original layout, formatting, and proofread text applied (span-by-span).")
+        logger.info("PDF saved successfully with original layout, formatting, and proofread/suggestion text applied (span-by-span).")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
@@ -848,7 +852,7 @@ def convert_and_proofread():
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
             
             # Save the proofread PDF while preserving all formatting and images
-            save_text_to_pdf(proofread_text_content, output_path, original_pdf_path)
+            save_text_to_pdf(proofread_text_content, output_path, original_pdf_path, selected_suggestions=selected_suggestions)
             
             return jsonify({
                 "download_url": "/download/" + output_filename
