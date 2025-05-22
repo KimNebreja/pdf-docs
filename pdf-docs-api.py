@@ -722,7 +722,7 @@ def apply_proofread_text(original_text, proofread_text, selected_suggestions=Non
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=None, selected_suggestions=None):
     """
-    Saves proofread text to a new PDF file, preserving the original layout and formatting, and applying proofreading and suggestions span-by-span. Draws each span at its original (x, y) position to perfectly match the original alignment and spacing.
+    Saves proofread text to a new PDF file, re-justifying each line after proofreading so the line is always justified even if the text changes.
     """
     try:
         from reportlab.pdfgen import canvas as rl_canvas
@@ -786,24 +786,48 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path, proofread_text_content=N
                 if "lines" in block:
                     for line in block["lines"]:
                         if "spans" in line:
-                            for span in line["spans"]:
-                                bbox = span["bbox"]
-                                x, y = bbox[0], page_height - bbox[1]
-                                font_name = get_font_name(span.get("font", "Helvetica"))
-                                font_size = span.get("size", 11)
-                                c.setFont(font_name, font_size)
-                                # Use aligned proofread span if available
+                            # Gather all span info for this line
+                            line_spans = line["spans"]
+                            # Calculate available width for justification
+                            x0s = [span["bbox"][0] for span in line_spans]
+                            x1s = [span["bbox"][2] for span in line_spans]
+                            line_x0 = min(x0s)
+                            line_x1 = max(x1s)
+                            # Prepare the full line text from aligned spans
+                            line_words = []
+                            for span in line_spans:
                                 original_words = span["text"].split()
                                 n_words = len(original_words)
                                 draw_words = aligned_spans[span_word_idx:span_word_idx + n_words]
-                                draw_text = ' '.join(draw_words) if draw_words else span["text"]
+                                line_words.extend(draw_words if draw_words else original_words)
                                 span_word_idx += n_words
-                                c.drawString(x, y, draw_text)
+                            # Calculate y position (use first span's y)
+                            y = page_height - line_spans[0]["bbox"][1]
+                            font_name = get_font_name(line_spans[0].get("font", "Helvetica"))
+                            font_size = line_spans[0].get("size", 11)
+                            c.setFont(font_name, font_size)
+                            # Calculate text width
+                            total_word_width = sum([c.stringWidth(w, font_name, font_size) for w in line_words])
+                            n_spaces = len(line_words) - 1
+                            available_width = line_x1 - line_x0
+                            if n_spaces > 0 and total_word_width < available_width:
+                                # Justify: distribute extra space between words
+                                extra_space = (available_width - total_word_width) / n_spaces
+                                x = line_x0
+                                for i, word in enumerate(line_words):
+                                    c.drawString(x, y, word)
+                                    word_width = c.stringWidth(word, font_name, font_size)
+                                    if i < n_spaces:
+                                        x += word_width + extra_space
+                            else:
+                                # Left align if only one word or no extra space
+                                x = line_x0
+                                c.drawString(x, y, ' '.join(line_words))
             if page_num < len(doc) - 1:
                 c.showPage()
         c.save()
         doc.close()
-        logger.info("PDF saved successfully with original layout, formatting, proofread/suggestion text, and exact alignment.")
+        logger.info("PDF saved successfully with re-justified lines after proofreading.")
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
         raise e
