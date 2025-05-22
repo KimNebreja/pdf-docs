@@ -19,8 +19,7 @@ import json
 import numpy as np
 from collections import defaultdict
 import difflib
-from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT, TA_CENTER, TA_RIGHT
-from PIL import Image, ImageDraw, ImageFont
+from reportlab.lib.enums import TA_JUSTIFY
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -675,7 +674,7 @@ def extract_text_with_formatting(pdf_path):
                     keep_blank_chars=True,
                     x_tolerance=3,
                     y_tolerance=3,
-                    extra_attrs=['fontname', 'size', 'upright', 'top', 'bottom', 'x0', 'x1', 'y0', 'y1', 'width', 'height', 'upright', 'text']
+                    extra_attrs=['fontname', 'size', 'upright']
                 )
                 
                 # Group words into lines based on y-position
@@ -703,68 +702,15 @@ def extract_text_with_formatting(pdf_path):
                         'is_table': False,
                         'is_column': False,
                         'is_header': False,
-                        'is_footer': False,
-                        'line_height': max(w['height'] for w in line_words) if line_words else 0,
-                        'line_width': sum(w['width'] for w in line_words) if line_words else 0,
-                        'line_spacing': 0,  # Will be calculated later
-                        'alignment': 'left',  # Default alignment
-                        'indentation': min(w['x0'] for w in line_words) if line_words else 0,
-                        'right_margin': page.width - max(w['x1'] for w in line_words) if line_words else 0
+                        'is_footer': False
                     }
                     
-                    # Calculate line spacing
-                    line_obj['line_spacing'] = 0 # Default to 0
-                    if len(sorted_lines) > 1:
-                        current_idx = sorted_lines.index((y_pos, line_words))
-                        if current_idx > 0:
-                            # Calculate space from the bottom of the previous line to the top of the current line
-                            prev_line_words = sorted_lines[current_idx - 1][1]
-                            if prev_line_words:
-                                prev_bottom = max(w['bottom'] for w in prev_line_words)
-                                current_top = min(w['top'] for w in line_words)
-                                line_obj['line_spacing'] = current_top - prev_bottom
-                    
-                    # Determine alignment
-                    alignment = 'left' # Default alignment
-                    if line_words:
-                        page_width = page.width
-                        text_width = sum(w['width'] for w in line_words) + sum(line_words[i+1]['x0'] - (line_words[i]['x0'] + line_words[i]['width']) for i in range(len(line_words)-1))
-                        line_x0 = min(w['x0'] for w in line_words)
-                        line_x1 = max(w['x1'] for w in line_words)
-                        
-                        # Simple check for centered text: left margin approx equals right margin
-                        left_margin = line_x0
-                        right_margin = page_width - line_x1
-                        
-                        if abs(left_margin - right_margin) < 10: # Tolerance for centering
-                            alignment = 'center'
-                        # Check for right alignment: right margin is small and left margin is large
-                        elif right_margin < 10 and left_margin > page_width * 0.1: # Tolerance and threshold for right alignment
-                             alignment = 'right'
-                        # Check for justified text (if text fills most of the line width)
-                        elif text_width > page_width * 0.8: # If text fills more than 80% of the line width
-                             alignment = 'justify'
-                        
-                    line_obj['alignment'] = alignment
-                    
-                    # Calculate indentation and right margin relative to the page content area
-                    # Assuming content area roughly within margins (e.g., 72 points)
-                    content_x0 = 72 # Example left margin
-                    content_x1 = page_width - 72 # Example right margin
-                    
-                    line_obj['indentation'] = line_x0 - content_x0
-                    line_obj['right_margin'] = content_x1 - line_x1
-
                     # Check if this line is part of a table
                     for table in tables:
                         if (table['bbox'][1] <= y_pos <= table['bbox'][3] and
                             table['bbox'][0] <= line_words[0]['x0'] <= table['bbox'][2]):
                             line_obj['is_table'] = True
                             line_obj['table_data'] = table['data']
-                            line_obj['table_position'] = {
-                                'row': int((y_pos - table['bbox'][1]) / (table['bbox'][3] - table['bbox'][1]) * table['rows']),
-                                'col': int((line_words[0]['x0'] - table['bbox'][0]) / (table['bbox'][2] - table['bbox'][0]) * table['cols'])
-                            }
                             break
                             
                     # Check if this line is part of a column
@@ -773,11 +719,6 @@ def extract_text_with_formatting(pdf_path):
                             column['x0'] <= line_words[0]['x0'] <= column['x1']):
                             line_obj['is_column'] = True
                             line_obj['column'] = column
-                            line_obj['column_position'] = {
-                                'x0': column['x0'],
-                                'x1': column['x1'],
-                                'width': column['width']
-                            }
                             break
                             
                     # Check if this line is a header
@@ -785,7 +726,6 @@ def extract_text_with_formatting(pdf_path):
                         if (header['region'][1] <= y_pos <= header['region'][3] and
                             header['region'][0] <= line_words[0]['x0'] <= header['region'][2]):
                             line_obj['is_header'] = True
-                            line_obj['header_text'] = header['text']
                             break
                             
                     # Check if this line is a footer
@@ -793,7 +733,6 @@ def extract_text_with_formatting(pdf_path):
                         if (footer['region'][1] <= y_pos <= footer['region'][3] and
                             footer['region'][0] <= line_words[0]['x0'] <= footer['region'][2]):
                             line_obj['is_footer'] = True
-                            line_obj['footer_text'] = footer['text']
                             break
                             
                     result.append(line_obj)
@@ -810,8 +749,6 @@ def extract_text_with_formatting(pdf_path):
             for i, paragraph in enumerate(paragraphs):
                 if line in paragraph['lines']:
                     line['paragraph_index'] = i
-                    line['paragraph_spacing'] = paragraph.get('spacing', 0)
-                    line['paragraph_indentation'] = paragraph.get('indentation', 0)
                     break
                     
             # Find which list this line belongs to
@@ -820,8 +757,6 @@ def extract_text_with_formatting(pdf_path):
                     if line['line_index'] == item['line_index']:
                         line['list_index'] = i
                         line['list_type'] = list_obj['type']
-                        line['list_indentation'] = item['indentation']
-                        line['list_marker'] = item.get('marker', '')
                         break
                         
         return result
@@ -831,391 +766,95 @@ def extract_text_with_formatting(pdf_path):
 
 def save_text_to_pdf(text, pdf_path, original_pdf_path):
     """
-    Saves proofread text to a new PDF file by converting pages to images,
-    overlaying corrected text, and converting back to PDF.
+    Saves proofread text to a new PDF file while preserving the exact formatting of the original PDF.
     """
     try:
-        # Open the original PDF with PyMuPDF
-        original_doc = fitz.open(original_pdf_path)
-        img_info_list = [] # Store (image, page_num, original_page_rect)
-
-        # Convert each page to an image and store original page dimensions
-        for page_num in range(len(original_doc)):
-            page = original_doc.load_page(page_num)
-            original_page_rect = page.rect
-            # Render page to a high-resolution PNG image
-            # We'll use a fixed DPI (e.g., 300) for consistent scaling
-            dpi = 300
-            matrix = fitz.Matrix(dpi / 72, dpi / 72)
-            pix = page.get_pixmap(matrix=matrix)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            img_info_list.append((img, page_num, original_page_rect))
-
-        # original_doc.close() # Keep open to get text info
-
-        # Ensure text is a single string
-        if isinstance(text, list):
-            text = ' '.join(text)
-
-        # --- Image Processing: Clear Original Text Areas ---
-        processed_img_list = [] # Store images with cleared text
-
-        # Re-extract text information with bounding boxes from the original PDF
-        # Scale these bounding boxes to the image dimensions
-        original_spans_by_page = defaultdict(list)
-        for page_num in range(len(original_doc)):
-             page = original_doc.load_page(page_num)
-             # Get text blocks and spans with their bounding boxes
-             blocks = page.get_text("dict")['blocks']
-             for b in blocks:
-                 if b['type'] == 0: # text block
-                     for l in b['lines']:
-                         for s in l['spans']:
-                             # Scale bbox from PDF points to image pixels
-                             original_page_rect = original_doc[page_num].rect # Get rect again
-                             img_width, img_height = img_info_list[page_num][0].size
-                             x_scale = img_width / original_page_rect.width
-                             y_scale = img_height / original_page_rect.height
-
-                             scaled_bbox = fitz.Rect(s['bbox'])
-                             scaled_bbox.x0 *= x_scale
-                             scaled_bbox.y0 *= y_scale
-                             scaled_bbox.x1 *= x_scale
-                             scaled_bbox.y1 *= y_scale
-
-                             original_spans_by_page[page_num].append({
-                                 'bbox': scaled_bbox,
-                                 'font': s.get('font', 'Helvetica'),
-                                 'size': s.get('size', 11) * x_scale, # Scale font size too
-                                 'color': s.get('color', 0),
-                                 'flags': s.get('flags', 0),
-                                 'text': s['text']
-                             })
-
-        original_doc.close() # Close the original doc after extracting info
-
-        # Process each image: draw white rectangles over text areas
-        for img, page_num, _ in img_info_list:
-            draw = ImageDraw.Draw(img)
-            
-            # Draw white rectangles over original text span bounding boxes
-            # Add a small buffer to ensure full coverage
-            buffer_pixels = 2 # pixels
-            for span_info in original_spans_by_page[page_num]:
-                 bbox = span_info['bbox']
-                 # Create a slightly buffered rectangle
-                 erase_rect = [
-                     bbox.x0 - buffer_pixels,
-                     bbox.y0 - buffer_pixels,
-                     bbox.x1 + buffer_pixels,
-                     bbox.y1 + buffer_pixels,
-                 ]
-                 draw.rectangle(erase_rect, fill="white")
-
-            processed_img_list.append((img, page_num)) # Store image with cleared text
-
-        # --- Image Processing: Draw Corrected Text ---
-        final_img_list = [] # Store images with corrected text drawn
-
-        # Prepare original and corrected text for mapping
-        # Concatenate text from all original spans across all pages
-        original_full_text_concat = "".join([s['text'] for page_num in sorted(original_spans_by_page.keys()) for s in original_spans_by_page[page_num]])
-        corrected_full_text = text
-
-        # Use sequence matcher to find correspondences
-        sm = difflib.SequenceMatcher(None, original_full_text_concat, corrected_full_text)
-        opcodes = sm.get_opcodes()
-
-        # Create a mapping from original character index to corrected character index
-        # This map helps in translating positions from the original concatenated text to the corrected one.
-        original_to_corrected_map = {}
-        original_cursor_map = 0
-        corrected_cursor_map = 0
-        for tag, i1, i2, j1, j2 in opcodes:
-            if tag == 'equal':
-                for i in range(i1, i2):
-                    original_to_corrected_map[i] = corrected_cursor_map + (i - i1)
-                original_cursor_map += (i2 - i1)
-                corrected_cursor_map += (j2 - j1)
-            elif tag == 'replace':
-                 # Map the start of the original replaced segment to the start of the corrected replacement segment
-                 if i1 < i2: # Ensure original segment is not empty
-                     original_to_corrected_map[i1] = j1
-                 # Map the end of the original replaced segment to the end of the corrected replacement segment
-                 if i2 > i1:
-                      original_to_corrected_map[i2] = j2 # Point after the segment
-
-                 original_cursor_map += (i2 - i1)
-                 corrected_cursor_map += (j2 - j1)
-            elif tag == 'insert':
-                 # An insertion at original index i1 corresponds to corrected range j1 to j2
-                 # Map the original index i1 to the start of the inserted text j1
-                 original_to_corrected_map[i1] = j1
-                 corrected_cursor_map += (j2 - j1)
-            elif tag == 'delete':
-                 # A deletion of original range i1 to i2 has no corresponding text in corrected version.
-                 # Map the start of the deleted segment i1 to the corrected position j1 (end of preceding segment)
-                 if i1 < i2: # Ensure original segment is not empty
-                      original_to_corrected_map[i1] = j1
-                 # Map the end of the deleted segment i2 to the same corrected position j1
-                 if i2 > i1:
-                       original_to_corrected_map[i2] = j1
-
-                 original_cursor_map += (i2 - i1)
-                 # corrected_cursor_map does not advance for deletions
-
-
-        # Iterate through images with cleared text and draw corrected text
-        original_char_pos_for_drawing = 0 # Track position in the concatenated original text
-
-        for img, page_num in processed_img_list:
-            draw = ImageDraw.Draw(img)
-            
-            # Get original spans for this page, sorted by their position to ensure correct processing order
-            page_spans = sorted(original_spans_by_page[page_num], key=lambda s: (s['bbox'].y0, s['bbox'].x0))
-
-            for span_info in page_spans:
-                 original_span_text = span_info['text']
-                 original_span_length = len(original_span_text)
-                 span_bbox = span_info['bbox'] # Already scaled to image pixels
-                 font_name = span_info.get('font', 'Helvetica')
-                 font_size = span_info.get('size', 11) # Already scaled to image size
-                 color_int = span_info.get('color', 0)
-                 # Convert integer color to RGB tuple for Pillow
-                 color_rgb = ((color_int >> 16) & 255, (color_int >> 8) & 255, color_int & 255)
-
-                 is_bold = bool(span_info.get('flags', 0) & 1)
-                 is_italic = bool(span_info.get('flags', 0) & 2)
-                 
-                 # Find the corresponding corrected text segment for this original span
-                 start_original_index = original_char_pos_for_drawing
-                 end_original_index = original_char_pos_for_drawing + original_span_length
-
-                 # Use the character map to get the corresponding range in the corrected full text
-                 # Get the start index in the corrected text. Use .get with default to handle cases not in map.
-                 # If the start index of the original span is in the map, use its mapping.
-                 # Otherwise, try to infer from the previous mapped position.
-
-                 corrected_segment_start = original_to_corrected_map.get(start_original_index)
-
-                 corrected_segment_parts = []
-                 original_span_start_in_concat = original_char_pos_for_drawing
-                 original_span_end_in_concat = original_char_pos_for_drawing + original_span_length
-
-                 # Iterate through opcodes to find the corresponding corrected text
-                 current_original_pos_in_opcodes = 0 # Tracks position within the original text as we iterate through opcodes
-                 current_corrected_pos_in_opcodes = 0 # Tracks position within the corrected text as we iterate through opcodes
-
-                 for tag, i1, i2, j1, j2 in sm.get_opcodes():
-                     # Original range of the current opcode: i1 to i2 in original_full_text_concat
-                     # Corrected range of the current opcode: j1 to j2 in corrected_full_text
-
-                     # Calculate the overlap between the original span's range and the opcode's original range
-                     overlap_start_in_original_span = max(original_span_start_in_concat, i1)
-                     overlap_end_in_original_span = min(original_span_end_in_concat, i2)
-
-                     # If there is an overlap in the original text ranges
-                     if overlap_start_in_original_span < overlap_end_in_original_span:
-                         # Determine the corresponding segment in the corrected text
-                         corrected_overlap_start = -1
-                         corrected_overlap_end = -1
-
-                         if tag == 'equal' or tag == 'replace':
-                             # For equal/replace, map the overlapping range from original to corrected opcode range
-                             pos_in_opcode_original = overlap_start_in_original_span - i1
-                             corrected_overlap_start = j1 + pos_in_opcode_original
-
-                             # Calculate the length of the overlap in the original text
-                             overlap_length = overlap_end_in_original_span - overlap_start_in_original_span
-
-                             # The corresponding end in corrected depends on the tag
-                             if tag == 'equal':
-                                 corrected_overlap_end = corrected_overlap_start + overlap_length # Length is the same
-                             elif tag == 'replace' and (i2 - i1) > 0:
-                                 # For replace, scale the overlap length by the ratio of corrected to original opcode lengths
-                                 proportion_of_opcode = (overlap_end_in_original_span - overlap_start_in_original_span) / (i2 - i1)
-                                 corrected_overlap_end = j1 + int(proportion_of_opcode * (j2 - j1)) # Approximate end
-                             else: # Handle replace with empty original segment (shouldn't overlap this way)
-                                  corrected_overlap_end = corrected_overlap_start
-
-                         elif tag == 'insert':
-                             # For an insertion, if the insertion point (i1) is within the original span's range,
-                             # we consider the entire inserted segment (j1 to j2) as potentially belonging to this span.
-                             # This is a heuristic; a more precise method is very complex.
-                             # Let's check if the insertion point is within the span's *original* boundaries.
-                             if i1 >= original_span_start_in_concat and i1 < original_span_end_in_concat:
-                                 corrected_overlap_start = j1
-                                 corrected_overlap_end = j2
-
-                         elif tag == 'delete':
-                             # For a deletion, the corrected range is empty. If the deletion range overlaps the original span,
-                             # it means part of the original span was deleted. There is no corresponding corrected text.
-                             corrected_overlap_start = j1 # End of previous segment in corrected text
-                             corrected_overlap_end = j1 # No text added
-
-
-                         # Append the corresponding corrected text segment if valid
-                         if corrected_overlap_start != -1 and corrected_overlap_start <= corrected_overlap_end:
-                              corrected_segment_parts.append(corrected_full_text[corrected_overlap_start:corrected_overlap_end])
-                         elif corrected_overlap_start != -1 and corrected_overlap_start > corrected_overlap_end:
-                             logger.warning(f"Calculated reversed corrected overlap range: {corrected_overlap_start}-{corrected_overlap_end} for tag {tag}, original span range {original_span_start_in_concat}-{original_span_end_in_concat}")
-                             # Append empty string to avoid errors with reversed ranges
-                             corrected_segment_parts.append("")
-                         # If corrected_overlap_start is still -1, no valid corrected segment found for this overlap
-
-
-                     # If the original range of the current opcode starts after the original span's end,
-                     # we can break the opcode iteration for this span.
-                     if i1 >= original_span_end_in_concat:
-                         break
-
-
-                 corrected_segment_for_span = "".join(corrected_segment_parts)
-
-                 # If the corrected segment is empty or only whitespace, and the original span had text,
-                 # this might indicate a deletion or a mapping issue. We should skip drawing this segment.
-                 # Only skip if the original span had content and the corrected one is empty/whitespace.
-                 if not corrected_segment_for_span.strip() and original_span_length > 0 and original_span_text.strip():
-                      original_char_pos_for_drawing += original_span_length
-                      continue # Skip drawing empty or whitespace-only corrected segments that replaced non-empty original text
-                 # If the original span was empty/whitespace, and corrected is also empty/whitespace, we also skip.
-                 if not corrected_segment_for_span.strip() and not original_span_text.strip():
-                      original_char_pos_for_drawing += original_span_length
-                      continue
-
-
-                 # Calculate text position within the span bbox to preserve original alignment
-                 text_x = span_bbox.x0 # Default horizontal position
-                 text_y = span_bbox.y0 # Default vertical position (top of bbox)
-
-                 # Get font for drawing
-                 image_font = None
-                 pillow_font_size = int(font_size)
-
-                 # Calculate text dimensions before alignment adjustments
-                 if image_font:
-                     try:
-                         text_render_bbox = draw.textbbox((0, 0), corrected_segment_for_span, font=image_font)
-                         text_width_pixels = text_render_bbox[2] - text_render_bbox[0]
-                         text_height_pixels = text_render_bbox[3] - text_render_bbox[1]
-                         # Adjust vertical position based on font metrics
-                         text_y = span_bbox.y0 - text_render_bbox[1]
-                     except Exception as bbox_e:
-                         logger.warning(f"Error calculating text bbox: {bbox_e}")
-                         text_width_pixels = len(corrected_segment_for_span) * (pillow_font_size * 0.6)
-                         text_height_pixels = pillow_font_size
-                 else:
-                     text_width_pixels = len(corrected_segment_for_span) * (pillow_font_size * 0.6)
-                     text_height_pixels = pillow_font_size
-
-                 # Enhanced alignment detection using multiple heuristics
-                 img_width, img_height = img.size
-                 span_center_x = (span_bbox.x0 + span_bbox.x1) / 2
-                 img_center_x = img_width / 2
-                 
-                 # Calculate margins and text block width
-                 left_margin = span_bbox.x0
-                 right_margin = img_width - span_bbox.x1
-                 text_block_width = span_bbox.x1 - span_bbox.x0
-                 
-                 # Calculate alignment score for each type
-                 center_score = 1 - min(1, abs(span_center_x - img_center_x) / (img_width * 0.1))
-                 right_score = 1 - min(1, right_margin / (left_margin + 1))
-                 justify_score = 1 - min(1, abs(text_block_width - text_width_pixels) / text_block_width)
-                 
-                 # Determine alignment based on scores
-                 alignment = 'left'  # Default
-                 max_score = 0
-                 
-                 if center_score > 0.8 and center_score > max_score:
-                     alignment = 'center'
-                     max_score = center_score
-                 if right_score > 0.8 and right_score > max_score:
-                     alignment = 'right'
-                     max_score = right_score
-                 if justify_score > 0.9 and justify_score > max_score:
-                     alignment = 'justify'
-                     max_score = justify_score
-
-                 # Apply alignment to text position
-                 if alignment == 'right':
-                     text_x = span_bbox.x1 - text_width_pixels
-                 elif alignment == 'center':
-                     text_x = span_bbox.x0 + (text_block_width - text_width_pixels) / 2
-                 elif alignment == 'justify':
-                     # For justified text, we'll use the full width of the span
-                     text_x = span_bbox.x0
-                     # Note: Actual justification would require word spacing adjustment
-                     # which is complex to implement with PIL
-                 else:  # left alignment
-                     text_x = span_bbox.x0
-
-                 # Ensure text doesn't go beyond span bounds
-                 text_x = max(span_bbox.x0, min(text_x, span_bbox.x1 - text_width_pixels))
-
-                 # Draw the corrected text onto the image
-                 try:
-                     if image_font:
-                         draw.text((text_x, text_y), corrected_segment_for_span, fill=color_rgb, font=image_font)
-                     else:
-                         draw.text((text_x, text_y), corrected_segment_for_span, fill=color_rgb)
-                 except Exception as drawing_e:
-                     logger.error(f"Error drawing text segment '{corrected_segment_for_span}': {drawing_e}")
-                     pass
-
-                 original_char_pos_for_drawing += original_span_length
-
-            final_img_list.append((img, page_num)) # Store image with corrected text drawn and its page_num
-
-        # --- Final PDF Creation from Processed Images ---
-        new_doc = fitz.open()
-        # We need the original page dimensions for each image to set the new PDF page size correctly
-        # img_info_list contains (original_image, page_num, original_page_rect)
-        # final_img_list contains the processed images and their page_num in the same order
-
-        for img, page_num in final_img_list:
-             # Get the original page info for this image using the stored page_num
-             original_page_rect = None
-             for img_info, info_page_num, original_rect in img_info_list:
-                  if info_page_num == page_num:
-                       original_page_rect = original_rect
-                       break
-
-             img_byte_arr = io.BytesIO()
-             img.save(img_byte_arr, format='PNG')
-             img_bytes = img_byte_arr.getvalue()
-
-             # Insert image into a new PDF page with original dimensions
-             if original_page_rect:
-                  original_page_width = original_page_rect.width
-                  original_page_height = original_page_rect.height
-                  img_page = new_doc.new_page(width=original_page_width, height=original_page_height)
-
-                  # Calculate the image size in points based on DPI (used during creation)
-                  dpi = 300
-                  img_width_pts = img.width * 72 / dpi
-                  img_height_pts = img.height * 72 / dpi
-
-                  # Create a rectangle on the new PDF page to place the image
-                  # It should cover the whole page, matching original dimensions in points
-                  image_rect_on_pdf = fitz.Rect(0, 0, original_page_width, original_page_height)
-
-                  # Insert the image into the PDF page, scaled to fit the defined rectangle
-                  img_page.insert_image(image_rect_on_pdf, stream=img_bytes)
-
-             else:
-                  # Fallback if original dimensions not found
-                  img_page = new_doc.new_page(width=img.width, height=img.height) # Use image dimensions in pixels as points
-                  img_page.insert_image(img_page.rect, stream=img_bytes)
-
-
-        new_doc.save(pdf_path)
-        new_doc.close()
-
-        logger.info("PDF saved successfully using image overlay method")
-
+        register_fonts()
+        doc_template = SimpleDocTemplate(
+            pdf_path,
+            pagesize=letter,
+            leftMargin=72, rightMargin=72, topMargin=72, bottomMargin=72
+        )
+        page_width, page_height = letter
+        with pdfplumber.open(original_pdf_path) as pdf:
+            doc = fitz.open(original_pdf_path)
+            formatted_lines = extract_text_with_formatting(original_pdf_path)
+            if isinstance(text, str):
+                proofread_words = text.split()
+            else:
+                proofread_words = ' '.join(text).split()
+            original_words = []
+            line_word_indices = []
+            idx = 0
+            for line in formatted_lines:
+                words = line['text'].split()
+                start = idx
+                idx += len(words)
+                end = idx
+                line_word_indices.append((start, end))
+                original_words.extend(words)
+            sm = difflib.SequenceMatcher(None, original_words, proofread_words)
+            corrected_words = list(original_words)
+            opcodes = sm.get_opcodes()
+            for tag, i1, i2, j1, j2 in opcodes:
+                if tag in ('replace', 'insert'):
+                    corrected_words[i1:i2] = proofread_words[j1:j2]
+                elif tag == 'delete':
+                    corrected_words[i1:i2] = []
+            corrected_lines = []
+            for start, end in line_word_indices:
+                corrected_lines.append(' '.join(corrected_words[start:end]))
+            # Group lines by page number
+            lines_by_page = defaultdict(list)
+            for i, line in enumerate(formatted_lines):
+                line = dict(line)
+                line['line_index'] = i
+                lines_by_page[line.get('page', 0)].append(line)
+            story = []
+            page_numbers = sorted(lines_by_page.keys())
+            for page_idx, page_num in enumerate(page_numbers):
+                page_lines = lines_by_page[page_num]
+                # Detect paragraphs for this page
+                paragraphs = detect_paragraphs(page_lines)
+                for para in paragraphs:
+                    para_lines = para['lines']
+                    para_indices = [l['line_index'] for l in para_lines]
+                    para_text = ' '.join([corrected_lines[i] for i in para_indices])
+                    if not para_lines:
+                        continue
+                    first_word = para_lines[0]['words'][0]
+                    font_name = get_font_name(first_word.get('fontname', 'Helvetica'))
+                    font_size = float(first_word.get('size', 11))
+                    mupdf_page = doc[para_lines[0]['page']]
+                    bbox = fitz.Rect(first_word['x0'], first_word['top'], first_word['x0'] + first_word['width'], first_word['bottom'])
+                    color = get_text_color(mupdf_page, bbox)
+                    r, g, b = normalize_color(color) if color else (0, 0, 0)
+                    style = ParagraphStyle(
+                        name='Justified',
+                        fontName=font_name,
+                        fontSize=font_size,
+                        leading=font_size * 1.2,
+                        textColor=Color(r, g, b),
+                        alignment=TA_JUSTIFY,
+                        spaceAfter=font_size * 0.5,
+                        spaceBefore=0,
+                        leftIndent=0,
+                        rightIndent=0,
+                    )
+                    para_obj = Paragraph(para_text, style)
+                    story.append(para_obj)
+                    story.append(Spacer(1, font_size * 0.5))
+                # Add a page break after each page except the last
+                if page_idx < len(page_numbers) - 1:
+                    story.append(PageBreak())
+            def add_page_number(canvas, doc):
+                canvas.setFont('Helvetica', 10)
+                canvas.drawString(page_width/2, 30, str(doc.page))
+            doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+            doc.close()
+            logger.info("PDF saved successfully with original formatting")
     except Exception as e:
-        logger.error(f"Error in image-based PDF creation: {str(e)}")
+        logger.error(f"Error creating PDF: {str(e)}")
         raise e
 
 @app.route('/convert', methods=['POST'])
