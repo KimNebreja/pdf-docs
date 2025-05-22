@@ -798,8 +798,8 @@ def detect_text_alignment(page, line_words):
             width_percentage = (line_width / available_width) * 100
             logger.debug(f"Width percentage: {width_percentage}%")
             
-            # If the line uses more than 60% of the available width, it's probably justified
-            if width_percentage > 60:
+            # If the line uses more than 70% of the available width, it's probably justified
+            if width_percentage > 70:
                 logger.debug("Detected as justified text based on width percentage")
                 return 'JUSTIFY'
         
@@ -822,17 +822,27 @@ def detect_text_alignment(page, line_words):
             # Check for justified text based on multiple criteria
             is_justified = False
             
-            # Criterion 1: Line spans most of the width
-            if line_width > available_width * 0.7:
+            # Criterion 1: Line spans most of the width and has multiple words
+            if line_width > available_width * 0.7 and len(line_words) > 2:
                 is_justified = True
+                logger.debug("Criterion 1 met: Line spans most of width with multiple words")
                 
-            # Criterion 2: Uniform word spacing
-            if len(gaps) > 1 and gap_variance < 200 and avg_gap > 2:
+            # Criterion 2: Uniform word spacing with reasonable gaps
+            if len(gaps) > 1 and gap_variance < 100 and avg_gap > 3:
                 is_justified = True
+                logger.debug("Criterion 2 met: Uniform word spacing")
                 
-            # Criterion 3: Multiple words with reasonable spacing
-            if len(line_words) > 2 and avg_gap > 1 and line_width > available_width * 0.5:
+            # Criterion 3: Multiple words with significant spacing
+            if len(line_words) > 2 and avg_gap > 2 and line_width > available_width * 0.6:
                 is_justified = True
+                logger.debug("Criterion 3 met: Multiple words with significant spacing")
+                
+            # Criterion 4: Text starts near left margin and spans most of width
+            if (abs(line_start - left_margin) < 20 and 
+                line_width > available_width * 0.8 and 
+                len(line_words) > 1):
+                is_justified = True
+                logger.debug("Criterion 4 met: Text starts at margin and spans width")
                 
             if is_justified:
                 logger.debug("Detected as justified text based on spacing")
@@ -859,8 +869,13 @@ def detect_text_alignment(page, line_words):
             len(line_words) <= 2):  # Left-aligned text is usually short
             return 'LEFT'
             
-        # Default to justified alignment
-        return 'JUSTIFY'
+        # Default to justified alignment for multi-word lines
+        if len(line_words) > 2:
+            logger.debug("Defaulting to justified alignment for multi-word line")
+            return 'JUSTIFY'
+            
+        # Default to left alignment for short lines
+        return 'LEFT'
         
     except Exception as e:
         logger.warning(f"Error detecting text alignment: {str(e)}")
@@ -970,17 +985,31 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                         backColor=None
                     )
                     
-                    # Create paragraph with the style
+                    # Create paragraph with the style and ensure proper justification
                     para_obj = Paragraph(para_text, style)
+                    
+                    # Add the paragraph to the story
                     story.append(para_obj)
+                    
+                    # Add a small spacer after each paragraph
                     story.append(Spacer(1, font_size * 0.5))
+                
                 # Add a page break after each page except the last
                 if page_idx < len(page_numbers) - 1:
                     story.append(PageBreak())
+            
+            # Build the PDF with the story
             def add_page_number(canvas, doc):
                 canvas.setFont('Helvetica', 10)
                 canvas.drawString(page_width/2, 30, str(doc.page))
-            doc_template.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+            
+            # Build the PDF with proper justification
+            doc_template.build(
+                story,
+                onFirstPage=add_page_number,
+                onLaterPages=add_page_number
+            )
+            
             doc.close()
             logger.info("PDF saved successfully with original formatting")
     except Exception as e:
