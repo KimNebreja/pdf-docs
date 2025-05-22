@@ -436,13 +436,26 @@ def detect_paragraphs(lines):
                     else:
                         formatting['alignment'] = 'center'
                 
+                # Add the original line dictionary to the paragraph structure
+                paragraph_lines_data = []
+                for line_data in current_paragraph:
+                     # Ensure line_index is present, use -1 or raise error if critical
+                     if 'line_index' not in line_data:
+                          logger.error("line_index missing in line data before paragraph creation")
+                          # Depending on criticality, could skip line, raise error, or assign dummy index
+                          # For now, let's ensure it's logged and see if it helps debug
+                          # As a fallback, we could try using enumerate index, but original index is preferred
+                          pass # Or handle error appropriately
+
+                     paragraph_lines_data.append(line_data) # Append the full line dictionary
+
                 paragraphs.append({
-                    'lines': current_paragraph,
+                    'lines': paragraph_lines_data, # Use the list of full line dictionaries
                     'text': ' '.join([l['text'] for l in current_paragraph]),
                     'spacing': spacing_info,
                     'formatting': formatting
                 })
-                current_paragraph = []
+                current_paragraph = [] # Clear for the next paragraph
                 
             # Add this line to the current paragraph
             current_paragraph.append(line) # Append the original line dictionary
@@ -501,8 +514,16 @@ def detect_paragraphs(lines):
                 else:
                     formatting['alignment'] = 'center'
             
+            # Add the original line dictionary to the paragraph structure for the last paragraph
+            paragraph_lines_data = []
+            for line_data in current_paragraph:
+                 if 'line_index' not in line_data:
+                      logger.error("line_index missing in last paragraph line data before paragraph creation")
+                      pass # Handle error appropriately
+                 paragraph_lines_data.append(line_data)
+
             paragraphs.append({
-                'lines': current_paragraph,
+                'lines': paragraph_lines_data, # Use the list of full line dictionaries
                 'text': ' '.join([l['text'] for l in current_paragraph]),
                 'spacing': spacing_info,
                 'formatting': formatting
