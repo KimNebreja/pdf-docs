@@ -798,8 +798,8 @@ def detect_text_alignment(page, line_words):
             width_percentage = (line_width / available_width) * 100
             logger.debug(f"Width percentage: {width_percentage}%")
             
-            # If the line uses more than 70% of the available width, it's probably justified
-            if width_percentage > 70:
+            # If the line uses more than 60% of the available width, it's probably justified
+            if width_percentage > 60:
                 logger.debug("Detected as justified text based on width percentage")
                 return 'JUSTIFY'
         
@@ -823,23 +823,23 @@ def detect_text_alignment(page, line_words):
             is_justified = False
             
             # Criterion 1: Line spans most of the width and has multiple words
-            if line_width > available_width * 0.7 and len(line_words) > 2:
+            if line_width > available_width * 0.6 and len(line_words) > 2:
                 is_justified = True
                 logger.debug("Criterion 1 met: Line spans most of width with multiple words")
                 
             # Criterion 2: Uniform word spacing with reasonable gaps
-            if len(gaps) > 1 and gap_variance < 100 and avg_gap > 3:
+            if len(gaps) > 1 and gap_variance < 200 and avg_gap > 2:
                 is_justified = True
                 logger.debug("Criterion 2 met: Uniform word spacing")
                 
             # Criterion 3: Multiple words with significant spacing
-            if len(line_words) > 2 and avg_gap > 2 and line_width > available_width * 0.6:
+            if len(line_words) > 2 and avg_gap > 1 and line_width > available_width * 0.5:
                 is_justified = True
                 logger.debug("Criterion 3 met: Multiple words with significant spacing")
                 
             # Criterion 4: Text starts near left margin and spans most of width
-            if (abs(line_start - left_margin) < 20 and 
-                line_width > available_width * 0.8 and 
+            if (abs(line_start - left_margin) < 30 and 
+                line_width > available_width * 0.7 and 
                 len(line_words) > 1):
                 is_justified = True
                 logger.debug("Criterion 4 met: Text starts at margin and spans width")
@@ -987,6 +987,10 @@ def save_text_to_pdf(text, pdf_path, original_pdf_path):
                     
                     # Create paragraph with the style and ensure proper justification
                     para_obj = Paragraph(para_text, style)
+                    
+                    # Force justify alignment if detected
+                    if alignment == 'JUSTIFY':
+                        para_obj.alignment = TA_JUSTIFY
                     
                     # Add the paragraph to the story
                     story.append(para_obj)
