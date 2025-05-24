@@ -37,6 +37,31 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 # Using local LanguageTool instance for more accuracy
 tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online API
 
+# Custom grammar rules and patterns
+GRAMMAR_RULES = {
+    'sentence_structure': {
+        'pattern': r'^[A-Z][^.!?]*[.!?]$',  # Must start with capital, end with punctuation
+        'message': 'Sentence must start with a capital letter and end with proper punctuation'
+    },
+    'subject_verb_agreement': {
+        'singular_subjects': ['he', 'she', 'it', 'this', 'that', 'each', 'every', 'either', 'neither', 'one', 'anyone', 'everyone', 'someone', 'nobody', 'anybody', 'somebody', 'everybody'],
+        'plural_subjects': ['they', 'we', 'you', 'these', 'those', 'both', 'few', 'many', 'several'],
+        'message': 'Subject-verb agreement error detected'
+    },
+    'passive_voice': {
+        'pattern': r'\b(am|is|are|was|were|be|been|being)\s+\w+ed\b',
+        'message': 'Consider using active voice instead of passive voice'
+    },
+    'double_negative': {
+        'pattern': r'\b(not|no|never|none|nothing|neither|nowhere|hardly|barely|scarcely)\s+.*\b(not|no|never|none|nothing|neither|nowhere|hardly|barely|scarcely)\b',
+        'message': 'Double negative detected'
+    },
+    'article_usage': {
+        'pattern': r'\b(a|an)\s+[aeiouAEIOU]',  # Basic article check
+        'message': 'Check article usage (a vs an)'
+    }
+}
+
 def extract_text_from_pdf(pdf_path):
     """Extracts text from a PDF file with advanced formatting preservation."""
     try:
@@ -398,23 +423,130 @@ def get_text_color(page, bbox):
         logger.warning(f"Error getting text color: {str(e)}")
         return None
 
-def proofread_text(text):
-    """Proofreads text using LanguageTool and returns corrected text with details."""
-    try:
-        matches = tool.check(text)
-        corrected_text = language_tool_python.utils.correct(text, matches)
-
-        # Collect detailed grammar mistakes
-        errors = []
-        for match in matches:
+def check_custom_grammar_rules(text):
+    """Applies custom grammar rules to the text."""
+    errors = []
+    sentences = re.split(r'[.!?]+', text)
+    
+    for i, sentence in enumerate(sentences):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+            
+        # Check sentence structure
+        if not re.match(GRAMMAR_RULES['sentence_structure']['pattern'], sentence):
             errors.append({
+                'message': GRAMMAR_RULES['sentence_structure']['message'],
+                'suggestions': ['Ensure sentence starts with capital letter and ends with proper punctuation'],
+                'offset': sum(len(s) + 1 for s in sentences[:i]),  # +1 for the punctuation
+                'length': len(sentence)
+            })
+            
+        # Check subject-verb agreement
+        words = sentence.lower().split()
+        for j, word in enumerate(words):
+            if word in GRAMMAR_RULES['subject_verb_agreement']['singular_subjects']:
+                if j + 1 < len(words) and words[j + 1].endswith(('s', 'es')) and not words[j + 1].endswith(('is', 'was', 'has')):
+                    errors.append({
+                        'message': GRAMMAR_RULES['subject_verb_agreement']['message'],
+                        'suggestions': ['Use singular verb form'],
+                        'offset': sum(len(w) + 1 for w in words[:j]),
+                        'length': len(word)
+                    })
+            elif word in GRAMMAR_RULES['subject_verb_agreement']['plural_subjects']:
+                if j + 1 < len(words) and not words[j + 1].endswith(('s', 'es')) and not words[j + 1].endswith(('are', 'were', 'have')):
+                    errors.append({
+                        'message': GRAMMAR_RULES['subject_verb_agreement']['message'],
+                        'suggestions': ['Use plural verb form'],
+                        'offset': sum(len(w) + 1 for w in words[:j]),
+                        'length': len(word)
+                    })
+                    
+        # Check passive voice
+        passive_matches = re.finditer(GRAMMAR_RULES['passive_voice']['pattern'], sentence)
+        for match in passive_matches:
+            errors.append({
+                'message': GRAMMAR_RULES['passive_voice']['message'],
+                'suggestions': ['Consider rewriting in active voice'],
+                'offset': sum(len(s) + 1 for s in sentences[:i]) + match.start(),
+                'length': match.end() - match.start()
+            })
+            
+        # Check double negatives
+        double_neg_matches = re.finditer(GRAMMAR_RULES['double_negative']['pattern'], sentence)
+        for match in double_neg_matches:
+            errors.append({
+                'message': GRAMMAR_RULES['double_negative']['message'],
+                'suggestions': ['Remove one of the negative words'],
+                'offset': sum(len(s) + 1 for s in sentences[:i]) + match.start(),
+                'length': match.end() - match.start()
+            })
+            
+        # Check article usage
+        article_matches = re.finditer(GRAMMAR_RULES['article_usage']['pattern'], sentence)
+        for match in article_matches:
+            errors.append({
+                'message': GRAMMAR_RULES['article_usage']['message'],
+                'suggestions': ['Use "an" before words starting with vowel sounds'],
+                'offset': sum(len(s) + 1 for s in sentences[:i]) + match.start(),
+                'length': match.end() - match.start()
+            })
+            
+    return errors
+
+def proofread_text(text):
+    """Enhanced proofreading using LanguageTool and custom grammar rules."""
+    try:
+        # Configure LanguageTool with stricter settings
+        tool = language_tool_python.LanguageToolPublicAPI('en-US')
+        
+        # Get basic LanguageTool matches
+        matches = tool.check(text)
+        
+        # Apply custom grammar rules
+        custom_errors = check_custom_grammar_rules(text)
+        
+        # Combine LanguageTool and custom errors
+        all_errors = []
+        
+        # Add LanguageTool errors
+        for match in matches:
+            all_errors.append({
                 "message": match.message,
                 "suggestions": match.replacements,
                 "offset": match.offset,
-                "length": match.errorLength
+                "length": match.errorLength,
+                "source": "LanguageTool"
             })
-
-        return corrected_text, errors
+            
+        # Add custom grammar errors
+        for error in custom_errors:
+            all_errors.append({
+                "message": error["message"],
+                "suggestions": error["suggestions"],
+                "offset": error["offset"],
+                "length": error["length"],
+                "source": "Custom Rules"
+            })
+            
+        # Sort errors by offset
+        all_errors.sort(key=lambda x: x["offset"])
+        
+        # Apply corrections
+        corrected_text = text
+        offset_adjustment = 0
+        
+        for error in all_errors:
+            if error["suggestions"]:
+                # Apply the first suggestion
+                suggestion = error["suggestions"][0]
+                start = error["offset"] + offset_adjustment
+                end = start + error["length"]
+                corrected_text = corrected_text[:start] + suggestion + corrected_text[end:]
+                offset_adjustment += len(suggestion) - error["length"]
+                
+        return corrected_text, all_errors
+        
     except Exception as e:
         logger.error(f"Error proofreading text: {str(e)}")
         raise
