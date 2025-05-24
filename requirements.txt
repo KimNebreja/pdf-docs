@@ -2,9 +2,9 @@ flask
 flask-cors
 werkzeug
 gunicorn
+language-tool-python
 PyMuPDF
 reportlab
 pdfplumber
 logging
 numpy
-requests
