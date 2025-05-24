@@ -2,7 +2,7 @@ flask
 flask-cors
 werkzeug
 gunicorn
-language_tool_python
+requests>=2.31.0
 PyMuPDF
 reportlab
 pdfplumber
