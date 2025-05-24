@@ -21,11 +21,6 @@ from collections import defaultdict
 import difflib
 from reportlab.lib.enums import TA_JUSTIFY
 import tempfile
-import nltk
-from nltk import sent_tokenize
-
-# Ensure NLTK models are downloaded
-nltk.download('punkt')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -39,57 +34,56 @@ OUTPUT_FOLDER = "/tmp"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Use local LanguageTool server for improved accuracy
-tool = language_tool_python.LanguageTool('en-US')
+# Using local LanguageTool instance for more accuracy
+tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online API
 
-# Enhanced rule set for professional grammar use
-preferred_rules = [
-    # Sentence structure and completeness
-    'SENTENCE_FRAGMENT',
-    'ENGLISH_WORD_REPEAT_BEGINNING_RULE',
-    'UPPERCASE_SENTENCE_START',
-    'COMMA_PARENTHESIS_WHITESPACE',
-    'EN_UNPAIRED_BRACKETS',
-    'EN_COMMA_AFTER_QUESTION_WORD',
-    'COMMA_BEFORE_CLAUSE',
-    
-    # Subject-verb agreement and pronouns
-    'SVA_AGREEMENT',
-    'PRONOUN_AGREEMENT',
-    'PRP_POSSIBLE_AGREEMENT',
-    'PRP_USELESS_THAN',
-    'CONFUSION_RULE',
+def apply_custom_grammar_rules(text):
+    issues = []
+    lines = text.split('\n')
+    sentence_end = re.compile(r"[.!?]$")
+    passive_voice = re.compile(r"\b(be|is|are|was|were|been|being)\s+\w+ed\b", re.IGNORECASE)
+    double_negative = re.compile(r"\b(not|never|no)\b.*\b(none|nothing|nowhere|no one|n't)\b", re.IGNORECASE)
 
-    # Punctuation and clarity
-    'PUNCTUATION_PARAGRAPH_END',
-    'COMMA_USAGE',
-    'PUNCTUATION_COMMA_MISUSED',
-    'EN_QUOTES',
-    'APOSTROPHE_PLURAL',
-    'EN_A_VS_AN',
-    'ENGLISH_WORD_REPEAT_RULE',
+    for i, line in enumerate(lines):
+        stripped = line.strip()
 
-    # Formal writing and clarity (professional use)
-    'WORDINESS',
-    'REDUNDANCY',
-    'CURRENCY',
-    'EN_CONJUNCTIVE_ADVERB_INSERTION',
-    'DASH_RULE',
-    'COLON_USAGE',
-    'SEMICOLON_WHITESPACE',
-    'LIST_ITEM_PUNCTUATION',
-    'PASSIVE_VOICE',
-    'MORFOLOGIK_RULE_EN_US',  # Spelling
-    'PROFANITY',
-    'GENDER_NEUTRALITY'
-]
+        if stripped and not sentence_end.search(stripped):
+            issues.append({
+                "message": "Incomplete or improperly punctuated sentence.",
+                "suggestions": ["Ensure the sentence ends with proper punctuation."],
+                "line": i,
+                "offset": 0,
+                "length": len(stripped)
+            })
 
-for rule_id in preferred_rules:
-    try:
-        tool.enable_rule(rule_id)
-    except Exception as e:
-        logger.warning(f"Could not enable rule {rule_id}: {e}")
+        if passive_voice.search(line):
+            issues.append({
+                "message": "Passive voice detected.",
+                "suggestions": ["Consider rewriting in active voice for clarity."],
+                "line": i,
+                "offset": 0,
+                "length": len(line)
+            })
 
+        if double_negative.search(line):
+            issues.append({
+                "message": "Double negative detected.",
+                "suggestions": ["Revise to remove the double negative for clarity."],
+                "line": i,
+                "offset": 0,
+                "length": len(line)
+            })
+
+        if stripped and not stripped[0].isupper():
+            issues.append({
+                "message": "Sentence does not start with a capital letter.",
+                "suggestions": ["Capitalize the first word of the sentence."],
+                "line": i,
+                "offset": 0,
+                "length": len(stripped)
+            })
+
+    return issues
 
 def extract_text_from_pdf(pdf_path):
     """Extracts text from a PDF file with advanced formatting preservation."""
@@ -453,28 +447,21 @@ def get_text_color(page, bbox):
         return None
 
 def proofread_text(text):
-    """Proofreads text using LanguageTool with sentence segmentation."""
     try:
-        sentences = sent_tokenize(text)
-        corrected_sentences = []
-        grammar_issues = []
+        matches = tool.check(text)
+        corrected_text = language_tool_python.utils.correct(text, matches)
 
-        for sentence in sentences:
-            matches = tool.check(sentence)
-            corrected = language_tool_python.utils.correct(sentence, matches)
-            corrected_sentences.append(corrected)
+        lt_errors = [{
+            "message": m.message,
+            "suggestions": m.replacements,
+            "offset": m.offset,
+            "length": m.errorLength
+        } for m in matches]
 
-            for match in matches:
-                grammar_issues.append({
-                    "message": match.message,
-                    "suggestions": match.replacements,
-                    "offset": match.offset,
-                    "length": match.errorLength,
-                    "ruleId": match.ruleId,
-                    "category": match.ruleIssueType
-                })
+        custom_errors = apply_custom_grammar_rules(text)
+        all_errors = lt_errors + custom_errors
 
-        return " ".join(corrected_sentences), grammar_issues
+        return corrected_text, all_errors
     except Exception as e:
         logger.error(f"Error proofreading text: {str(e)}")
         raise
