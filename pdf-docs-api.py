@@ -1,12 +1,4 @@
-
-from dotenv import load_dotenv
-from sharpapi import SharpAPI
-
-load_dotenv()  # Load environment variables from .env
-
-import os
 import requests
-
 
 from flask import Flask, request, send_file, jsonify
 from werkzeug.utils import secure_filename
