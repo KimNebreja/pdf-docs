@@ -1,7 +1,7 @@
 from flask import Flask, request, send_file, jsonify
 from werkzeug.utils import secure_filename
 import os
-import language_tool_python
+import requests
 from flask_cors import CORS
 import fitz  # PyMuPDF
 import pdfplumber
@@ -21,6 +21,12 @@ from collections import defaultdict
 import difflib
 from reportlab.lib.enums import TA_JUSTIFY
 import tempfile
+from dotenv import load_dotenv
+
+
+
+load_dotenv()
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -34,8 +40,9 @@ OUTPUT_FOLDER = "/tmp"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Using local LanguageTool instance for more accuracy
-tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online API
+
+PROWRITINGAID_API_KEY = os.getenv("PROWRITINGAID_API_KEY")  # Store this in your environment
+PROWRITINGAID_API_HOST = "prowritingaid.p.rapidapi.com"  # Uses the online API
 
 def extract_text_from_pdf(pdf_path):
     """Extracts text from a PDF file with advanced formatting preservation."""
@@ -399,25 +406,55 @@ def get_text_color(page, bbox):
         return None
 
 def proofread_text(text):
-    """Proofreads text using LanguageTool and returns corrected text with details."""
+    """Proofreads text using ProWritingAid API and returns corrected text with details."""
     try:
-        matches = tool.check(text)
-        corrected_text = language_tool_python.utils.correct(text, matches)
+        url = "https://prowritingaid.p.rapidapi.com/analysis/grammar"
 
-        # Collect detailed grammar mistakes
+        payload = {
+            "text": text,
+            "language": "en"
+        }
+        headers = {
+            "content-type": "application/json",
+            "X-RapidAPI-Key": PROWRITINGAID_API_KEY,
+            "X-RapidAPI-Host": PROWRITINGAID_API_HOST
+        }
+
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+
+        result = response.json()
+
+        # Reconstruct corrected text
+        corrected_text = text
         errors = []
-        for match in matches:
+
+        # Process suggestions from the API
+        for issue in result.get("issues", []):
+            offset = issue.get("offset", 0)
+            length = issue.get("length", 0)
+            suggestions = issue.get("suggestions", [])
+            message = issue.get("message", "")
+
+            if suggestions:
+                suggestion = suggestions[0]  # Choose the first suggestion by default
+                before = corrected_text[:offset]
+                after = corrected_text[offset + length:]
+                corrected_text = before + suggestion + after
+
             errors.append({
-                "message": match.message,
-                "suggestions": match.replacements,
-                "offset": match.offset,
-                "length": match.errorLength
+                "message": message,
+                "suggestions": suggestions,
+                "offset": offset,
+                "length": length
             })
 
         return corrected_text, errors
+
     except Exception as e:
-        logger.error(f"Error proofreading text: {str(e)}")
+        logger.error(f"Error proofreading text with ProWritingAid: {str(e)}")
         raise
+
 
 def normalize_color(color):
     """
