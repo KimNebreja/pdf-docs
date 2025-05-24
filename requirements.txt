@@ -8,5 +8,4 @@ reportlab
 pdfplumber
 logging
 numpy
-spacy
-en_core_web_sm
+spacy>=3.7.2
