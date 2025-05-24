@@ -1,7 +1,7 @@
 from flask import Flask, request, send_file, jsonify
 from werkzeug.utils import secure_filename
 import os
-import language_tool_python
+import requests  # Add requests for SharpAPI
 from flask_cors import CORS
 import fitz  # PyMuPDF
 import pdfplumber
@@ -34,8 +34,9 @@ OUTPUT_FOLDER = "/tmp"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Using local LanguageTool instance for more accuracy
-tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online API
+# SharpAPI configuration
+SHARP_API_KEY = "n5vusSZludkt8FlrXIm0Ndd2O1NJZYqbGEL9IYLK"
+SHARP_API_URL = "https://api.sharpapi.com/v1/proofread"
 
 def extract_text_from_pdf(pdf_path):
     """Extracts text from a PDF file with advanced formatting preservation."""
@@ -399,22 +400,43 @@ def get_text_color(page, bbox):
         return None
 
 def proofread_text(text):
-    """Proofreads text using LanguageTool and returns corrected text with details."""
+    """Proofreads text using SharpAPI and returns corrected text with details."""
     try:
-        matches = tool.check(text)
-        corrected_text = language_tool_python.utils.correct(text, matches)
-
-        # Collect detailed grammar mistakes
+        headers = {
+            "Authorization": f"Bearer {SHARP_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "text": text,
+            "language": "en-US"
+        }
+        
+        response = requests.post(SHARP_API_URL, headers=headers, json=payload)
+        response.raise_for_status()  # Raise an exception for bad status codes
+        
+        result = response.json()
+        
+        # Extract corrected text and errors from SharpAPI response
+        corrected_text = result.get("corrected_text", text)
         errors = []
-        for match in matches:
-            errors.append({
-                "message": match.message,
-                "suggestions": match.replacements,
-                "offset": match.offset,
-                "length": match.errorLength
-            })
-
+        
+        # Process errors if available in the response
+        if "errors" in result:
+            for error in result["errors"]:
+                errors.append({
+                    "message": error.get("message", "Unknown error"),
+                    "suggestions": error.get("suggestions", []),
+                    "offset": error.get("offset", 0),
+                    "length": error.get("length", 0)
+                })
+        
         return corrected_text, errors
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error calling SharpAPI: {str(e)}")
+        # Return original text and empty errors list if API call fails
+        return text, []
     except Exception as e:
         logger.error(f"Error proofreading text: {str(e)}")
         raise
