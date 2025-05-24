@@ -1,7 +1,12 @@
+
+from dotenv import load_dotenv
+from sharpapi import SharpAPI
+
+load_dotenv()  # Load environment variables from .env
+
 from flask import Flask, request, send_file, jsonify
 from werkzeug.utils import secure_filename
 import os
-import requests  # Add requests for SharpAPI
 from flask_cors import CORS
 import fitz  # PyMuPDF
 import pdfplumber
@@ -34,40 +39,6 @@ OUTPUT_FOLDER = "/tmp"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# SharpAPI configuration
-SHARP_API_KEY = "n5vusSZludkt8FlrXIm0Ndd2O1NJZYqbGEL9IYLK"
-SHARP_API_URL = "https://api.sharpapi.com/v1/proofread"
-
-def verify_sharp_api_connection():
-    """Verify the SharpAPI connection and credentials."""
-    try:
-        headers = {
-            "Authorization": f"Bearer {SHARP_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        # Test with a simple text
-        test_payload = {
-            "text": "This is a test.",
-            "language": "en-US"
-        }
-        
-        response = requests.post(SHARP_API_URL, headers=headers, json=test_payload, timeout=10)
-        
-        if response.status_code == 200:
-            logger.info("SharpAPI connection successful")
-            return True
-        elif response.status_code == 401:
-            logger.error("SharpAPI authentication failed - Invalid API key")
-            return False
-        else:
-            logger.error(f"SharpAPI connection failed with status code: {response.status_code}")
-            logger.error(f"Response: {response.text}")
-            return False
-            
-    except requests.exceptions.RequestException as e:
-        logger.error(f"SharpAPI connection error: {str(e)}")
-        return False
 
 def extract_text_from_pdf(pdf_path):
     """Extracts text from a PDF file with advanced formatting preservation."""
@@ -431,93 +402,22 @@ def get_text_color(page, bbox):
         return None
 
 def proofread_text(text):
-    """Proofreads text using SharpAPI and returns corrected text with details."""
+    """Proofreads text using SharpAPI SDK."""
     try:
-        # Verify API connection first
-        if not verify_sharp_api_connection():
-            logger.error("Cannot proceed with proofreading - API connection failed")
-            return text, [{"message": "API connection failed", "suggestions": [], "offset": 0, "length": 0}]
+        api = SharpAPI()  # Automatically loads SHARP_API_KEY from .env
+        result = api.proofread(text=text, language="en")
 
-        headers = {
-            "Authorization": f"Bearer {SHARP_API_KEY}",
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
-        
-        # Split text into smaller chunks if it's too long (SharpAPI might have limits)
-        max_chunk_size = 5000  # Adjust based on API limits
-        text_chunks = [text[i:i + max_chunk_size] for i in range(0, len(text), max_chunk_size)]
-        
-        all_errors = []
-        corrected_chunks = []
-        
-        for chunk in text_chunks:
-            payload = {
-                "text": chunk,
-                "language": "en-US",
-                "options": {
-                    "check_grammar": True,
-                    "check_spelling": True,
-                    "check_style": True
-                }
-            }
-            
-            try:
-                response = requests.post(
-                    SHARP_API_URL,
-                    headers=headers,
-                    json=payload,
-                    timeout=30  # Increased timeout for larger texts
-                )
-                
-                if response.status_code != 200:
-                    logger.error(f"SharpAPI request failed with status {response.status_code}")
-                    logger.error(f"Response: {response.text}")
-                    # Use original chunk if API request fails
-                    corrected_chunks.append(chunk)
-                    continue
-                
-                result = response.json()
-                
-                # Extract corrected text and errors
-                corrected_chunk = result.get("corrected_text", chunk)
-                corrected_chunks.append(corrected_chunk)
-                
-                # Process errors if available
-                if "errors" in result:
-                    chunk_errors = result["errors"]
-                    # Adjust error offsets based on chunk position
-                    for error in chunk_errors:
-                        error["offset"] += len("".join(corrected_chunks[:-1]))
-                    all_errors.extend(chunk_errors)
-                
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Error processing chunk: {str(e)}")
-                corrected_chunks.append(chunk)
-                continue
-            except json.JSONDecodeError as e:
-                logger.error(f"Error parsing API response: {str(e)}")
-                corrected_chunks.append(chunk)
-                continue
-        
-        # Combine all corrected chunks
-        corrected_text = "".join(corrected_chunks)
-        
-        # Format errors in the expected structure
-        formatted_errors = []
-        for error in all_errors:
-            formatted_errors.append({
-                "message": error.get("message", "Unknown error"),
-                "suggestions": error.get("suggestions", []),
-                "offset": error.get("offset", 0),
-                "length": error.get("length", 0)
-            })
-        
-        return corrected_text, formatted_errors
-        
+        corrected_text = result.get("corrected_text", text)
+        errors = result.get("errors", [])
+
+        return corrected_text, errors
+
     except Exception as e:
-        logger.error(f"Unexpected error in proofreading: {str(e)}")
-        return text, [{"message": f"Proofreading error: {str(e)}", "suggestions": [], "offset": 0, "length": 0}]
+        logger.error(f"SharpAPI SDK error: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"Error proofreading text: {str(e)}")
+        raise
 
 def normalize_color(color):
     """
@@ -1169,22 +1069,5 @@ def download_file(filename):
         return send_file(file_path, as_attachment=True)
     return jsonify({"error": "File not found"}), 404
 
-# Add API verification on startup
-_api_initialized = False
-
-@app.before_request
-def initialize_api():
-    """Verify API connection before the first request."""
-    global _api_initialized
-    if not _api_initialized:
-        if not verify_sharp_api_connection():
-            logger.warning("SharpAPI connection failed on startup. Proofreading may not work properly.")
-        _api_initialized = True
-
 if __name__ == '__main__':
-    # Verify API connection on startup when running directly
-    if verify_sharp_api_connection():
-        logger.info("SharpAPI connection verified on startup")
-    else:
-        logger.warning("SharpAPI connection failed on startup. Proofreading may not work properly.")
     app.run(host='0.0.0.0', port=10000, debug=True)
