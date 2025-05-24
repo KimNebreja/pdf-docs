@@ -37,54 +37,6 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 # Using local LanguageTool instance for more accuracy
 tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online API
 
-def apply_custom_grammar_rules(text):
-    issues = []
-    lines = text.split('\n')
-    sentence_end = re.compile(r"[.!?]$")
-    passive_voice = re.compile(r"\b(be|is|are|was|were|been|being)\s+\w+ed\b", re.IGNORECASE)
-    double_negative = re.compile(r"\b(not|never|no)\b.*\b(none|nothing|nowhere|no one|n't)\b", re.IGNORECASE)
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-
-        if stripped and not sentence_end.search(stripped):
-            issues.append({
-                "message": "Incomplete or improperly punctuated sentence.",
-                "suggestions": ["Ensure the sentence ends with proper punctuation."],
-                "line": i,
-                "offset": 0,
-                "length": len(stripped)
-            })
-
-        if passive_voice.search(line):
-            issues.append({
-                "message": "Passive voice detected.",
-                "suggestions": ["Consider rewriting in active voice for clarity."],
-                "line": i,
-                "offset": 0,
-                "length": len(line)
-            })
-
-        if double_negative.search(line):
-            issues.append({
-                "message": "Double negative detected.",
-                "suggestions": ["Revise to remove the double negative for clarity."],
-                "line": i,
-                "offset": 0,
-                "length": len(line)
-            })
-
-        if stripped and not stripped[0].isupper():
-            issues.append({
-                "message": "Sentence does not start with a capital letter.",
-                "suggestions": ["Capitalize the first word of the sentence."],
-                "line": i,
-                "offset": 0,
-                "length": len(stripped)
-            })
-
-    return issues
-
 def extract_text_from_pdf(pdf_path):
     """Extracts text from a PDF file with advanced formatting preservation."""
     try:
@@ -447,21 +399,22 @@ def get_text_color(page, bbox):
         return None
 
 def proofread_text(text):
+    """Proofreads text using LanguageTool and returns corrected text with details."""
     try:
         matches = tool.check(text)
         corrected_text = language_tool_python.utils.correct(text, matches)
 
-        lt_errors = [{
-            "message": m.message,
-            "suggestions": m.replacements,
-            "offset": m.offset,
-            "length": m.errorLength
-        } for m in matches]
+        # Collect detailed grammar mistakes
+        errors = []
+        for match in matches:
+            errors.append({
+                "message": match.message,
+                "suggestions": match.replacements,
+                "offset": match.offset,
+                "length": match.errorLength
+            })
 
-        custom_errors = apply_custom_grammar_rules(text)
-        all_errors = lt_errors + custom_errors
-
-        return corrected_text, all_errors
+        return corrected_text, errors
     except Exception as e:
         logger.error(f"Error proofreading text: {str(e)}")
         raise
