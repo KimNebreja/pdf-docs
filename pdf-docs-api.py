@@ -2,7 +2,6 @@ from flask import Flask, request, send_file, jsonify
 from werkzeug.utils import secure_filename
 import os
 import language_tool_python
-import spacy
 from flask_cors import CORS
 import fitz  # PyMuPDF
 import pdfplumber
@@ -35,9 +34,8 @@ OUTPUT_FOLDER = "/tmp"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Initialize language tools
-tool = language_tool_python.LanguageToolPublicAPI('en-US')
-nlp = spacy.load("en_core_web_sm")
+# Using local LanguageTool instance for more accuracy
+tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online API
 
 def extract_text_from_pdf(pdf_path):
     """Extracts text from a PDF file with advanced formatting preservation."""
@@ -400,311 +398,23 @@ def get_text_color(page, bbox):
         logger.warning(f"Error getting text color: {str(e)}")
         return None
 
-def apply_custom_grammar_rules(text):
-    """
-    Applies custom grammar rules using spaCy and regex patterns to detect additional grammar issues.
-    Includes enhanced auxiliary verb checking, verb phrase analysis, and contraction handling.
-    """
-    issues = []
-    lines = text.split('\n')
-    sentence_end = re.compile(r"[.!?]$")
-    passive_voice = re.compile(r"\b(be|is|are|was|were|been|being)\s+\w+ed\b", re.IGNORECASE)
-    double_negative = re.compile(r"\b(not|never|no)\b.*\b(none|nothing|nowhere|no one|n't)\b", re.IGNORECASE)
-
-    # Auxiliary verb patterns with their contractions
-    aux_verb_patterns = {
-        'singular': {
-            'is': ["is", "isn't", "'s"],
-            'was': ["was", "wasn't"],
-            'has': ["has", "hasn't", "'s"],
-            'does': ["does", "doesn't"]
-        },
-        'plural': {
-            'are': ["are", "aren't", "'re"],
-            'were': ["were", "weren't"],
-            'have': ["have", "haven't", "'ve"],
-            'do': ["do", "don't"]
-        },
-        'modal': {
-            'can': ["can", "can't", "cannot"],
-            'could': ["could", "couldn't"],
-            'may': ["may", "mayn't"],
-            'might': ["might", "mightn't"],
-            'shall': ["shall", "shan't"],
-            'should': ["should", "shouldn't"],
-            'will': ["will", "won't", "'ll"],
-            'would': ["would", "wouldn't", "'d"],
-            'must': ["must", "mustn't"]
-        },
-        'perfect': {
-            'have': ["have", "haven't", "'ve"],
-            'has': ["has", "hasn't", "'s"],
-            'had': ["had", "hadn't", "'d"]
-        },
-        'progressive': {
-            'am': ["am", "ain't", "'m"],
-            'is': ["is", "isn't", "'s"],
-            'are': ["are", "aren't", "'re"],
-            'was': ["was", "wasn't"],
-            'were': ["were", "weren't"],
-            'be': ["be"],
-            'been': ["been"],
-            'being': ["being"]
-        }
-    }
-
-    # Subject-verb agreement patterns with special cases
-    singular_subjects = {
-        'pronouns': ['he', 'she', 'it', 'this', 'that'],
-        'indefinite': ['each', 'every', 'either', 'neither', 'one'],
-        'compound': ['anyone', 'everyone', 'someone', 'nobody', 'anybody', 'somebody', 'everybody'],
-        'collective': ['team', 'group', 'committee', 'family', 'class', 'company', 'organization', 'government'],
-        'quantities': ['each of', 'every one of', 'either of', 'neither of', 'one of']
-    }
-    
-    plural_subjects = {
-        'pronouns': ['they', 'we', 'you', 'these', 'those'],
-        'quantifiers': ['both', 'few', 'many', 'several'],
-        'collective': ['teams', 'groups', 'committees', 'families', 'classes', 'companies', 'organizations', 'governments']
-    }
-
-    # Contraction patterns for special cases
-    contraction_patterns = {
-        'is': {
-            'singular': ["he's", "she's", "it's", "that's", "this's"],
-            'plural': ["they're", "we're", "you're", "these're", "those're"]
-        },
-        'has': {
-            'singular': ["he's", "she's", "it's", "that's", "this's"],
-            'plural': ["they've", "we've", "you've"]
-        },
-        'have': {
-            'singular': ["he's", "she's", "it's", "that's", "this's"],
-            'plural': ["they've", "we've", "you've"]
-        }
-    }
-
-    def get_auxiliary_forms(aux_type, aux_word):
-        """Helper function to get all forms of an auxiliary verb."""
-        for category in aux_verb_patterns.values():
-            if aux_word in category:
-                return category[aux_word]
-        return [aux_word]
-
-    def check_contraction_agreement(token, subject, aux_type):
-        """Helper function to check contraction agreement with subject."""
-        if not subject or not token:
-            return None
-            
-        subject_text = subject.text.lower()
-        token_text = token.text.lower()
-        
-        # Check for special contraction cases
-        if aux_type in contraction_patterns:
-            if subject_text in singular_subjects['pronouns']:
-                if token_text in contraction_patterns[aux_type]['plural']:
-                    return f"Use '{contraction_patterns[aux_type]['singular'][singular_subjects['pronouns'].index(subject_text)]}' for singular subject."
-            elif subject_text in plural_subjects['pronouns']:
-                if token_text in contraction_patterns[aux_type]['singular']:
-                    return f"Use '{contraction_patterns[aux_type]['plural'][plural_subjects['pronouns'].index(subject_text)]}' for plural subject."
-        return None
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped:
-            continue
-
-        # Basic sentence structure checks
-        if stripped and not sentence_end.search(stripped):
-            issues.append({
-                "message": "Incomplete or improperly punctuated sentence.",
-                "suggestions": ["Ensure the sentence ends with proper punctuation."],
-                "offset": 0,
-                "length": len(stripped)
-            })
-
-        if stripped and not stripped[0].isupper():
-            issues.append({
-                "message": "Sentence does not start with a capital letter.",
-                "suggestions": ["Capitalize the first word of the sentence."],
-                "offset": 0,
-                "length": len(stripped)
-            })
-
-        # Advanced NLP analysis using spaCy
-        doc = nlp(stripped)
-        
-        # Track verb phrases and their components
-        verb_phrases = []
-        current_vp = []
-        
-        for token in doc:
-            # Collect verb phrases including contractions
-            if token.pos_ in ["VERB", "AUX"] or (token.pos_ == "PART" and token.text == "n't"):
-                current_vp.append(token)
-            elif current_vp:
-                verb_phrases.append(current_vp)
-                current_vp = []
-        
-        if current_vp:
-            verb_phrases.append(current_vp)
-
-        # Analyze each verb phrase
-        for vp in verb_phrases:
-            # Get the main verb and its auxiliaries
-            auxiliaries = [t for t in vp if t.pos_ == "AUX" or (t.pos_ == "PART" and t.text == "n't")]
-            main_verb = next((t for t in vp if t.pos_ == "VERB" and t.text != "n't"), None)
-            
-            if not main_verb and not auxiliaries:
-                continue
-
-            # Check subject-verb agreement
-            subject = None
-            for token in doc:
-                if token.dep_ in ["nsubj", "nsubjpass"] and token.head in vp:
-                    subject = token
-                    break
-
-            if subject and auxiliaries:
-                # Check auxiliary verb agreement
-                aux = auxiliaries[0]
-                aux_text = aux.text.lower()
-                
-                # Check for contraction agreement
-                contraction_suggestion = None
-                for aux_type in ['is', 'has', 'have']:
-                    if aux_type in contraction_patterns:
-                        suggestion = check_contraction_agreement(aux, subject, aux_type)
-                        if suggestion:
-                            contraction_suggestion = suggestion
-                            break
-
-                if contraction_suggestion:
-                    issues.append({
-                        "message": f"Contraction agreement error with '{aux_text}'.",
-                        "suggestions": [contraction_suggestion],
-                        "offset": aux.idx,
-                        "length": len(aux_text)
-                    })
-
-                # Check for don't/doesn't agreement
-                if aux_text in ["don't", "doesn't"]:
-                    subject_text = subject.text.lower()
-                    is_singular = any(subject_text in category for category in singular_subjects.values())
-                    if is_singular and aux_text == "don't":
-                        issues.append({
-                            "message": f"Use 'doesn't' with singular subject '{subject.text}'.",
-                            "suggestions": ["Use 'doesn't' for singular subjects."],
-                            "offset": aux.idx,
-                            "length": len(aux_text)
-                        })
-                    elif not is_singular and aux_text == "doesn't":
-                        issues.append({
-                            "message": f"Use 'don't' with plural subject '{subject.text}'.",
-                            "suggestions": ["Use 'don't' for plural subjects."],
-                            "offset": aux.idx,
-                            "length": len(aux_text)
-                        })
-
-                # Check for didn't agreement
-                if aux_text == "didn't":
-                    if subject.text.lower() in singular_subjects['pronouns']:
-                        issues.append({
-                            "message": f"Consider using 'wasn't' or 'hadn't' with singular subject '{subject.text}'.",
-                            "suggestions": ["Use appropriate past tense auxiliary based on context."],
-                            "offset": aux.idx,
-                            "length": len(aux_text)
-                        })
-
-            # Check modal verb usage with contractions
-            for aux in auxiliaries:
-                aux_text = aux.text.lower()
-                if aux_text in ["can't", "cannot", "couldn't", "won't", "wouldn't", "shouldn't", "mustn't"]:
-                    if main_verb and main_verb.tag_ not in ["VB"]:
-                        issues.append({
-                            "message": f"Modal verb contraction '{aux_text}' should be followed by base form of verb.",
-                            "suggestions": [f"Use base form after '{aux_text}'."],
-                            "offset": main_verb.idx,
-                            "length": len(main_verb.text)
-                        })
-
-            # Check perfect tense construction with contractions
-            if any(aux.text.lower() in ["'ve", "'s", "haven't", "hasn't", "hadn't"] for aux in auxiliaries):
-                if main_verb and main_verb.tag_ not in ["VBN"]:
-                    issues.append({
-                        "message": "Perfect tense requires past participle form.",
-                        "suggestions": ["Use past participle form after perfect tense auxiliaries."],
-                        "offset": main_verb.idx,
-                        "length": len(main_verb.text)
-                    })
-
-            # Check progressive tense construction with contractions
-            if any(aux.text.lower() in ["'m", "'s", "'re", "isn't", "aren't", "wasn't", "weren't"] for aux in auxiliaries):
-                if main_verb and main_verb.tag_ not in ["VBG"]:
-                    issues.append({
-                        "message": "Progressive tense requires present participle form.",
-                        "suggestions": ["Use present participle form (-ing) after progressive tense auxiliaries."],
-                        "offset": main_verb.idx,
-                        "length": len(main_verb.text)
-                    })
-
-            # Check for double auxiliaries with contractions
-            if len(auxiliaries) > 1:
-                aux_texts = [aux.text.lower() for aux in auxiliaries]
-                modal_contractions = ["can't", "couldn't", "won't", "wouldn't", "shouldn't", "mustn't"]
-                if any(aux in modal_contractions for aux in aux_texts) and \
-                   any(aux in modal_contractions for aux in aux_texts):
-                    issues.append({
-                        "message": "Multiple modal verb contractions detected.",
-                        "suggestions": ["Use only one modal verb contraction in a verb phrase."],
-                        "offset": auxiliaries[1].idx,
-                        "length": len(auxiliaries[1].text)
-                    })
-
-        # Check for passive voice with contractions
-        passive_with_contractions = re.compile(r"\b(isn't|aren't|wasn't|weren't)\s+\w+ed\b", re.IGNORECASE)
-        if passive_with_contractions.search(line):
-            issues.append({
-                "message": "Passive voice with contraction detected.",
-                "suggestions": ["Consider rewriting in active voice for clarity."],
-                "offset": 0,
-                "length": len(line)
-            })
-
-        # Check for double negatives with contractions
-        double_negative_with_contractions = re.compile(r"\b(not|never|no|n't)\b.*\b(none|nothing|nowhere|no one|n't)\b", re.IGNORECASE)
-        if double_negative_with_contractions.search(line):
-            issues.append({
-                "message": "Double negative with contraction detected.",
-                "suggestions": ["Revise to remove the double negative for clarity."],
-                "offset": 0,
-                "length": len(line)
-            })
-
-    return issues
-
 def proofread_text(text):
-    """Proofreads text using LanguageTool and custom grammar rules, returns corrected text with details."""
+    """Proofreads text using LanguageTool and returns corrected text with details."""
     try:
-        # Get LanguageTool matches
         matches = tool.check(text)
         corrected_text = language_tool_python.utils.correct(text, matches)
 
-        # Collect LanguageTool grammar mistakes
-        lt_errors = [{
-            "message": match.message,
-            "suggestions": match.replacements,
-            "offset": match.offset,
-            "length": match.errorLength
-        } for match in matches]
+        # Collect detailed grammar mistakes
+        errors = []
+        for match in matches:
+            errors.append({
+                "message": match.message,
+                "suggestions": match.replacements,
+                "offset": match.offset,
+                "length": match.errorLength
+            })
 
-        # Get custom grammar rule issues
-        custom_errors = apply_custom_grammar_rules(text)
-        
-        # Combine all errors
-        all_errors = lt_errors + custom_errors
-
-        return corrected_text, all_errors
+        return corrected_text, errors
     except Exception as e:
         logger.error(f"Error proofreading text: {str(e)}")
         raise
@@ -1214,25 +924,6 @@ def download_file(filename):
     if os.path.exists(file_path):
         return send_file(file_path, as_attachment=True)
     return jsonify({"error": "File not found"}), 404
-
-@app.route('/proofread', methods=['POST'])
-def proofread():
-    """Handles direct text proofreading without PDF conversion."""
-    try:
-        data = request.get_json()
-        if not data or 'text' not in data:
-            return jsonify({"error": "No text provided"}), 400
-
-        text = data.get("text", "")
-        corrected_text, errors = proofread_text(text)
-        
-        return jsonify({
-            "corrected_text": corrected_text,
-            "errors": errors
-        })
-    except Exception as e:
-        logger.error(f"Proofreading error: {str(e)}")
-        return jsonify({"error": f"Proofreading error: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
