@@ -21,6 +21,11 @@ from collections import defaultdict
 import difflib
 from reportlab.lib.enums import TA_JUSTIFY
 import tempfile
+import nltk
+from nltk import sent_tokenize
+
+# Ensure NLTK models are downloaded
+nltk.download('punkt')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -34,8 +39,57 @@ OUTPUT_FOLDER = "/tmp"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Using local LanguageTool instance for more accuracy
-tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online API
+# Use local LanguageTool server for improved accuracy
+tool = language_tool_python.LanguageTool('en-US')
+
+# Enhanced rule set for professional grammar use
+preferred_rules = [
+    # Sentence structure and completeness
+    'SENTENCE_FRAGMENT',
+    'ENGLISH_WORD_REPEAT_BEGINNING_RULE',
+    'UPPERCASE_SENTENCE_START',
+    'COMMA_PARENTHESIS_WHITESPACE',
+    'EN_UNPAIRED_BRACKETS',
+    'EN_COMMA_AFTER_QUESTION_WORD',
+    'COMMA_BEFORE_CLAUSE',
+    
+    # Subject-verb agreement and pronouns
+    'SVA_AGREEMENT',
+    'PRONOUN_AGREEMENT',
+    'PRP_POSSIBLE_AGREEMENT',
+    'PRP_USELESS_THAN',
+    'CONFUSION_RULE',
+
+    # Punctuation and clarity
+    'PUNCTUATION_PARAGRAPH_END',
+    'COMMA_USAGE',
+    'PUNCTUATION_COMMA_MISUSED',
+    'EN_QUOTES',
+    'APOSTROPHE_PLURAL',
+    'EN_A_VS_AN',
+    'ENGLISH_WORD_REPEAT_RULE',
+
+    # Formal writing and clarity (professional use)
+    'WORDINESS',
+    'REDUNDANCY',
+    'CURRENCY',
+    'EN_CONJUNCTIVE_ADVERB_INSERTION',
+    'DASH_RULE',
+    'COLON_USAGE',
+    'SEMICOLON_WHITESPACE',
+    'LIST_ITEM_PUNCTUATION',
+    'PASSIVE_VOICE',
+    'MORFOLOGIK_RULE_EN_US',  # Spelling
+    'PROFANITY',
+    'GENDER_NEUTRALITY'
+]
+
+for rule_id in preferred_rules:
+    try:
+        tool.enable_rule(rule_id)
+    except Exception as e:
+        logger.warning(f"Could not enable rule {rule_id}: {e}")
+
 
 def extract_text_from_pdf(pdf_path):
     """Extracts text from a PDF file with advanced formatting preservation."""
@@ -399,22 +453,28 @@ def get_text_color(page, bbox):
         return None
 
 def proofread_text(text):
-    """Proofreads text using LanguageTool and returns corrected text with details."""
+    """Proofreads text using LanguageTool with sentence segmentation."""
     try:
-        matches = tool.check(text)
-        corrected_text = language_tool_python.utils.correct(text, matches)
+        sentences = sent_tokenize(text)
+        corrected_sentences = []
+        grammar_issues = []
 
-        # Collect detailed grammar mistakes
-        errors = []
-        for match in matches:
-            errors.append({
-                "message": match.message,
-                "suggestions": match.replacements,
-                "offset": match.offset,
-                "length": match.errorLength
-            })
+        for sentence in sentences:
+            matches = tool.check(sentence)
+            corrected = language_tool_python.utils.correct(sentence, matches)
+            corrected_sentences.append(corrected)
 
-        return corrected_text, errors
+            for match in matches:
+                grammar_issues.append({
+                    "message": match.message,
+                    "suggestions": match.replacements,
+                    "offset": match.offset,
+                    "length": match.errorLength,
+                    "ruleId": match.ruleId,
+                    "category": match.ruleIssueType
+                })
+
+        return " ".join(corrected_sentences), grammar_issues
     except Exception as e:
         logger.error(f"Error proofreading text: {str(e)}")
         raise
