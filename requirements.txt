@@ -1,10 +1,10 @@
-flask
+Flask
 flask-cors
 werkzeug
 gunicorn
-requests>=2.31.0
 PyMuPDF
-reportlab
 pdfplumber
-logging
+reportlab
 numpy
+python-dotenv
+sharpapi-python-client
