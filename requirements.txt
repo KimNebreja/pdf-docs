@@ -1,9 +1,10 @@
-Flask
+flask
 flask-cors
 werkzeug
 gunicorn
+language-tool-python
 PyMuPDF
-pdfplumber
 reportlab
+pdfplumber
+logging
 numpy
-requests
