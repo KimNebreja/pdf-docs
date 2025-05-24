@@ -402,44 +402,89 @@ def get_text_color(page, bbox):
 def proofread_text(text):
     """Proofreads text using SharpAPI and returns corrected text with details."""
     try:
+        logger.info("Starting proofreading with SharpAPI...")
+        logger.info(f"Text length: {len(text)} characters")
+        
         headers = {
             "Authorization": f"Bearer {SHARP_API_KEY}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Accept": "application/json"
         }
         
         payload = {
             "text": text,
-            "language": "en-US"
+            "language": "en-US",
+            "options": {
+                "check_grammar": True,
+                "check_spelling": True,
+                "check_style": True
+            }
         }
         
-        response = requests.post(SHARP_API_URL, headers=headers, json=payload)
-        response.raise_for_status()  # Raise an exception for bad status codes
+        logger.info("Making request to SharpAPI...")
+        logger.debug(f"Request URL: {SHARP_API_URL}")
+        logger.debug(f"Request headers: {headers}")
         
-        result = response.json()
+        response = requests.post(
+            SHARP_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=30  # Add timeout
+        )
+        
+        logger.info(f"SharpAPI Response Status: {response.status_code}")
+        logger.debug(f"Response headers: {response.headers}")
+        
+        # Log response content for debugging
+        try:
+            response_content = response.json()
+            logger.debug(f"Response content: {response_content}")
+        except Exception as e:
+            logger.error(f"Error parsing response JSON: {str(e)}")
+            logger.debug(f"Raw response content: {response.text}")
+            raise
+        
+        if response.status_code != 200:
+            error_msg = f"SharpAPI returned status code {response.status_code}"
+            if 'error' in response_content:
+                error_msg += f": {response_content['error']}"
+            logger.error(error_msg)
+            return text, []
         
         # Extract corrected text and errors from SharpAPI response
-        corrected_text = result.get("corrected_text", text)
+        corrected_text = response_content.get("corrected_text", text)
+        if corrected_text == text:
+            logger.warning("No corrections were made by SharpAPI")
+        
         errors = []
         
         # Process errors if available in the response
-        if "errors" in result:
-            for error in result["errors"]:
-                errors.append({
+        if "errors" in response_content:
+            for error in response_content["errors"]:
+                error_info = {
                     "message": error.get("message", "Unknown error"),
                     "suggestions": error.get("suggestions", []),
                     "offset": error.get("offset", 0),
                     "length": error.get("length", 0)
-                })
+                }
+                errors.append(error_info)
+                logger.debug(f"Found error: {error_info}")
         
+        logger.info(f"Proofreading completed. Found {len(errors)} errors.")
         return corrected_text, errors
         
+    except requests.exceptions.Timeout:
+        logger.error("SharpAPI request timed out")
+        return text, []
     except requests.exceptions.RequestException as e:
         logger.error(f"Error calling SharpAPI: {str(e)}")
-        # Return original text and empty errors list if API call fails
+        if hasattr(e.response, 'text'):
+            logger.error(f"API Error Response: {e.response.text}")
         return text, []
     except Exception as e:
-        logger.error(f"Error proofreading text: {str(e)}")
-        raise
+        logger.error(f"Unexpected error in proofreading: {str(e)}")
+        logger.exception("Full traceback:")
+        return text, []
 
 def normalize_color(color):
     """
@@ -1007,8 +1052,17 @@ def convert_and_proofread():
 
         # Handle text and suggestions if provided directly
         if 'text' in request.form:
+            logger.info("Processing direct text input...")
             proofread_text_content = request.form['text']
+            logger.info(f"Received text length: {len(proofread_text_content)}")
+            
+            # Proofread the text
+            logger.info("Starting proofreading process...")
+            proofread_text_content, grammar_errors = proofread_text(proofread_text_content)
+            logger.info(f"Proofreading completed. Found {len(grammar_errors)} errors.")
+            
             original_filename = request.form.get('filename', 'document.pdf')
+            logger.info(f"Processing file: {original_filename}")
             
             # Store the original file path
             original_pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
