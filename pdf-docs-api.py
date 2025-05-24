@@ -4,6 +4,10 @@ from sharpapi import SharpAPI
 
 load_dotenv()  # Load environment variables from .env
 
+import os
+import requests
+
+
 from flask import Flask, request, send_file, jsonify
 from werkzeug.utils import secure_filename
 import os
@@ -402,21 +406,27 @@ def get_text_color(page, bbox):
         return None
 
 def proofread_text(text):
-    """Proofreads text using SharpAPI SDK."""
     try:
-        api = SharpAPI()  # Automatically loads SHARP_API_KEY from .env
-        result = api.proofread(text=text, language="en")
+        api_key = os.getenv("SHARP_API_KEY")
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "text": text,
+            "language": "en"
+        }
+        response = requests.post("https://api.sharpapi.com/v1/proofread", headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
 
-        corrected_text = result.get("corrected_text", text)
-        errors = result.get("errors", [])
+        corrected_text = data.get("corrected_text", text)
+        errors = data.get("errors", [])
 
         return corrected_text, errors
 
     except Exception as e:
-        logger.error(f"SharpAPI SDK error: {str(e)}")
-        raise
-    except Exception as e:
-        logger.error(f"Error proofreading text: {str(e)}")
+        logger.error(f"SharpAPI request failed: {str(e)}")
         raise
 
 def normalize_color(color):
