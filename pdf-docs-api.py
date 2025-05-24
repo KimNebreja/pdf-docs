@@ -1170,11 +1170,21 @@ def download_file(filename):
     return jsonify({"error": "File not found"}), 404
 
 # Add API verification on startup
-@app.before_first_request
+_api_initialized = False
+
+@app.before_request
 def initialize_api():
-    """Verify API connection when the application starts."""
-    if not verify_sharp_api_connection():
-        logger.warning("SharpAPI connection failed on startup. Proofreading may not work properly.")
+    """Verify API connection before the first request."""
+    global _api_initialized
+    if not _api_initialized:
+        if not verify_sharp_api_connection():
+            logger.warning("SharpAPI connection failed on startup. Proofreading may not work properly.")
+        _api_initialized = True
 
 if __name__ == '__main__':
+    # Verify API connection on startup when running directly
+    if verify_sharp_api_connection():
+        logger.info("SharpAPI connection verified on startup")
+    else:
+        logger.warning("SharpAPI connection failed on startup. Proofreading may not work properly.")
     app.run(host='0.0.0.0', port=10000, debug=True)
