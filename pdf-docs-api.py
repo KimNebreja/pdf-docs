@@ -1,7 +1,7 @@
 from flask import Flask, request, send_file, jsonify
 from werkzeug.utils import secure_filename
 import os
-import requests
+import language_tool_python
 from flask_cors import CORS
 import fitz  # PyMuPDF
 import pdfplumber
@@ -34,9 +34,8 @@ OUTPUT_FOLDER = "/tmp"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# GoTranscript API configuration
-GOTRANSCRIPT_API_TOKEN = "ZJx5qrmaqvxsfZe4kijTTgaX3CHlqrXwbz4GtGEINCMNBzAgy0LvJCO8ArznItgo"
-GOTRANSCRIPT_API_URL = "https://gotranscript.com/api/v4/transcription-proofreading"
+# Using local LanguageTool instance for more accuracy
+tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online API
 
 def extract_text_from_pdf(pdf_path):
     """Extracts text from a PDF file with advanced formatting preservation."""
@@ -400,55 +399,22 @@ def get_text_color(page, bbox):
         return None
 
 def proofread_text(text):
-    """Proofreads text using GoTranscript API and returns corrected text with details."""
+    """Proofreads text using LanguageTool and returns corrected text with details."""
     try:
-        # Prepare the API request
-        headers = {
-            'Authorization': f'Bearer {GOTRANSCRIPT_API_TOKEN}',
-            'Content-Type': 'application/json'
-        }
-        
-        # Create a temporary file to store the text
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
-            temp_file.write(text)
-            temp_file_path = temp_file.name
+        matches = tool.check(text)
+        corrected_text = language_tool_python.utils.correct(text, matches)
 
-        # Prepare the API payload
-        payload = {
-            'mode': 'test',
-            'language': 'english',
-            'transcription_url': f'file://{temp_file_path}',
-            'captions': False
-        }
-
-        # Make the API request
-        response = requests.post(GOTRANSCRIPT_API_URL, headers=headers, json=payload)
-        
-        # Clean up the temporary file
-        os.unlink(temp_file_path)
-
-        if response.status_code != 200:
-            logger.error(f"GoTranscript API error: {response.text}")
-            raise Exception(f"GoTranscript API error: {response.status_code}")
-
-        result = response.json()
-        
-        # Extract the proofread text and errors from the response
-        proofread_text = result.get('transcription', text)  # Fallback to original text if not provided
-        
-        # Convert GoTranscript errors to our format
+        # Collect detailed grammar mistakes
         errors = []
-        if 'errors' in result:
-            for error in result['errors']:
-                errors.append({
-                    "message": error.get('message', 'Unknown error'),
-                    "suggestions": error.get('suggestions', []),
-                    "offset": error.get('offset', 0),
-                    "length": error.get('length', 0)
-                })
+        for match in matches:
+            errors.append({
+                "message": match.message,
+                "suggestions": match.replacements,
+                "offset": match.offset,
+                "length": match.errorLength
+            })
 
-        return proofread_text, errors
-
+        return corrected_text, errors
     except Exception as e:
         logger.error(f"Error proofreading text: {str(e)}")
         raise
