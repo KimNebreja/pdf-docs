@@ -38,6 +38,37 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 SHARP_API_KEY = "n5vusSZludkt8FlrXIm0Ndd2O1NJZYqbGEL9IYLK"
 SHARP_API_URL = "https://api.sharpapi.com/v1/proofread"
 
+def verify_sharp_api_connection():
+    """Verify the SharpAPI connection and credentials."""
+    try:
+        headers = {
+            "Authorization": f"Bearer {SHARP_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        # Test with a simple text
+        test_payload = {
+            "text": "This is a test.",
+            "language": "en-US"
+        }
+        
+        response = requests.post(SHARP_API_URL, headers=headers, json=test_payload, timeout=10)
+        
+        if response.status_code == 200:
+            logger.info("SharpAPI connection successful")
+            return True
+        elif response.status_code == 401:
+            logger.error("SharpAPI authentication failed - Invalid API key")
+            return False
+        else:
+            logger.error(f"SharpAPI connection failed with status code: {response.status_code}")
+            logger.error(f"Response: {response.text}")
+            return False
+            
+    except requests.exceptions.RequestException as e:
+        logger.error(f"SharpAPI connection error: {str(e)}")
+        return False
+
 def extract_text_from_pdf(pdf_path):
     """Extracts text from a PDF file with advanced formatting preservation."""
     try:
@@ -402,89 +433,91 @@ def get_text_color(page, bbox):
 def proofread_text(text):
     """Proofreads text using SharpAPI and returns corrected text with details."""
     try:
-        logger.info("Starting proofreading with SharpAPI...")
-        logger.info(f"Text length: {len(text)} characters")
-        
+        # Verify API connection first
+        if not verify_sharp_api_connection():
+            logger.error("Cannot proceed with proofreading - API connection failed")
+            return text, [{"message": "API connection failed", "suggestions": [], "offset": 0, "length": 0}]
+
         headers = {
             "Authorization": f"Bearer {SHARP_API_KEY}",
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
         
-        payload = {
-            "text": text,
-            "language": "en-US",
-            "options": {
-                "check_grammar": True,
-                "check_spelling": True,
-                "check_style": True
-            }
-        }
+        # Split text into smaller chunks if it's too long (SharpAPI might have limits)
+        max_chunk_size = 5000  # Adjust based on API limits
+        text_chunks = [text[i:i + max_chunk_size] for i in range(0, len(text), max_chunk_size)]
         
-        logger.info("Making request to SharpAPI...")
-        logger.debug(f"Request URL: {SHARP_API_URL}")
-        logger.debug(f"Request headers: {headers}")
+        all_errors = []
+        corrected_chunks = []
         
-        response = requests.post(
-            SHARP_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=30  # Add timeout
-        )
-        
-        logger.info(f"SharpAPI Response Status: {response.status_code}")
-        logger.debug(f"Response headers: {response.headers}")
-        
-        # Log response content for debugging
-        try:
-            response_content = response.json()
-            logger.debug(f"Response content: {response_content}")
-        except Exception as e:
-            logger.error(f"Error parsing response JSON: {str(e)}")
-            logger.debug(f"Raw response content: {response.text}")
-            raise
-        
-        if response.status_code != 200:
-            error_msg = f"SharpAPI returned status code {response.status_code}"
-            if 'error' in response_content:
-                error_msg += f": {response_content['error']}"
-            logger.error(error_msg)
-            return text, []
-        
-        # Extract corrected text and errors from SharpAPI response
-        corrected_text = response_content.get("corrected_text", text)
-        if corrected_text == text:
-            logger.warning("No corrections were made by SharpAPI")
-        
-        errors = []
-        
-        # Process errors if available in the response
-        if "errors" in response_content:
-            for error in response_content["errors"]:
-                error_info = {
-                    "message": error.get("message", "Unknown error"),
-                    "suggestions": error.get("suggestions", []),
-                    "offset": error.get("offset", 0),
-                    "length": error.get("length", 0)
+        for chunk in text_chunks:
+            payload = {
+                "text": chunk,
+                "language": "en-US",
+                "options": {
+                    "check_grammar": True,
+                    "check_spelling": True,
+                    "check_style": True
                 }
-                errors.append(error_info)
-                logger.debug(f"Found error: {error_info}")
+            }
+            
+            try:
+                response = requests.post(
+                    SHARP_API_URL,
+                    headers=headers,
+                    json=payload,
+                    timeout=30  # Increased timeout for larger texts
+                )
+                
+                if response.status_code != 200:
+                    logger.error(f"SharpAPI request failed with status {response.status_code}")
+                    logger.error(f"Response: {response.text}")
+                    # Use original chunk if API request fails
+                    corrected_chunks.append(chunk)
+                    continue
+                
+                result = response.json()
+                
+                # Extract corrected text and errors
+                corrected_chunk = result.get("corrected_text", chunk)
+                corrected_chunks.append(corrected_chunk)
+                
+                # Process errors if available
+                if "errors" in result:
+                    chunk_errors = result["errors"]
+                    # Adjust error offsets based on chunk position
+                    for error in chunk_errors:
+                        error["offset"] += len("".join(corrected_chunks[:-1]))
+                    all_errors.extend(chunk_errors)
+                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error processing chunk: {str(e)}")
+                corrected_chunks.append(chunk)
+                continue
+            except json.JSONDecodeError as e:
+                logger.error(f"Error parsing API response: {str(e)}")
+                corrected_chunks.append(chunk)
+                continue
         
-        logger.info(f"Proofreading completed. Found {len(errors)} errors.")
-        return corrected_text, errors
+        # Combine all corrected chunks
+        corrected_text = "".join(corrected_chunks)
         
-    except requests.exceptions.Timeout:
-        logger.error("SharpAPI request timed out")
-        return text, []
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error calling SharpAPI: {str(e)}")
-        if hasattr(e.response, 'text'):
-            logger.error(f"API Error Response: {e.response.text}")
-        return text, []
+        # Format errors in the expected structure
+        formatted_errors = []
+        for error in all_errors:
+            formatted_errors.append({
+                "message": error.get("message", "Unknown error"),
+                "suggestions": error.get("suggestions", []),
+                "offset": error.get("offset", 0),
+                "length": error.get("length", 0)
+            })
+        
+        return corrected_text, formatted_errors
+        
     except Exception as e:
         logger.error(f"Unexpected error in proofreading: {str(e)}")
-        logger.exception("Full traceback:")
-        return text, []
+        return text, [{"message": f"Proofreading error: {str(e)}", "suggestions": [], "offset": 0, "length": 0}]
 
 def normalize_color(color):
     """
@@ -1052,17 +1085,8 @@ def convert_and_proofread():
 
         # Handle text and suggestions if provided directly
         if 'text' in request.form:
-            logger.info("Processing direct text input...")
             proofread_text_content = request.form['text']
-            logger.info(f"Received text length: {len(proofread_text_content)}")
-            
-            # Proofread the text
-            logger.info("Starting proofreading process...")
-            proofread_text_content, grammar_errors = proofread_text(proofread_text_content)
-            logger.info(f"Proofreading completed. Found {len(grammar_errors)} errors.")
-            
             original_filename = request.form.get('filename', 'document.pdf')
-            logger.info(f"Processing file: {original_filename}")
             
             # Store the original file path
             original_pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
@@ -1144,6 +1168,13 @@ def download_file(filename):
     if os.path.exists(file_path):
         return send_file(file_path, as_attachment=True)
     return jsonify({"error": "File not found"}), 404
+
+# Add API verification on startup
+@app.before_first_request
+def initialize_api():
+    """Verify API connection when the application starts."""
+    if not verify_sharp_api_connection():
+        logger.warning("SharpAPI connection failed on startup. Proofreading may not work properly.")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
