@@ -6,6 +6,4 @@ PyMuPDF
 pdfplumber
 reportlab
 numpy
-python-dotenv
-sharpapi-python-client
 requests
