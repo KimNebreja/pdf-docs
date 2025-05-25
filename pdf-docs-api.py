@@ -1,4 +1,4 @@
-from sharpapi import SharpAPI
+from sharpapi.client import SharpAPI
 from dotenv import load_dotenv
 from flask import Flask, request, send_file, jsonify
 from werkzeug.utils import secure_filename
