@@ -1,8 +1,7 @@
-from sharpapi.client import SharpAPI
-from dotenv import load_dotenv
 from flask import Flask, request, send_file, jsonify
 from werkzeug.utils import secure_filename
 import os
+import language_tool_python
 from flask_cors import CORS
 import fitz  # PyMuPDF
 import pdfplumber
@@ -30,17 +29,13 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 
-load_dotenv()
-SHARP_API_KEY = os.getenv("SHARP_API_KEY")
-sharp = SharpAPI(SHARP_API_KEY)
-
-
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "/tmp"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-
+# Using local LanguageTool instance for more accuracy
+tool = language_tool_python.LanguageToolPublicAPI('en-US')  # Uses the online API
 
 def extract_text_from_pdf(pdf_path):
     """Extracts text from a PDF file with advanced formatting preservation."""
@@ -404,22 +399,24 @@ def get_text_color(page, bbox):
         return None
 
 def proofread_text(text):
-    """Proofreads text using SharpAPI and returns corrected text with details."""
+    """Proofreads text using LanguageTool and returns corrected text with details."""
     try:
-        result = sharp.proofread(text)
-        corrected_text = result.corrected_text
-        errors = [
-            {
-                "message": issue.message,
-                "suggestions": issue.suggestions,
-                "offset": issue.offset,
-                "length": issue.length
-            }
-            for issue in result.issues
-        ]
+        matches = tool.check(text)
+        corrected_text = language_tool_python.utils.correct(text, matches)
+
+        # Collect detailed grammar mistakes
+        errors = []
+        for match in matches:
+            errors.append({
+                "message": match.message,
+                "suggestions": match.replacements,
+                "offset": match.offset,
+                "length": match.errorLength
+            })
+
         return corrected_text, errors
     except Exception as e:
-        logger.error(f"SharpAPI proofreading failed: {str(e)}")
+        logger.error(f"Error proofreading text: {str(e)}")
         raise
 
 def normalize_color(color):
